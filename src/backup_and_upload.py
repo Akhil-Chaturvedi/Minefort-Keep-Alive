@@ -1,16 +1,17 @@
 import os
 import sys
-import pysftp # Or ftplib if pysftp doesn't work for you
+import ftplib # Use ftplib for standard FTP
 import io
 import zipfile
 import datetime
 import subprocess
 import shutil
+import time # Import time for potential delays
 
 # --- Configuration from Environment Variables ---
 # FTP Details
 FTP_HOST = 'ftp.minefort.com'
-FTP_PORT = 21
+FTP_PORT = 21 # Default FTP port
 FTP_USERNAME = os.environ.get('FTP_USERNAME')
 FTP_PASSWORD = os.environ.get('FTP_PASSWORD')
 REMOTE_FTP_ROOT = '/' # The directory on the FTP server to backup (usually '/')
@@ -26,93 +27,107 @@ if not all([FTP_USERNAME, FTP_PASSWORD, BACKUP_REPO_URL, GITHUB_TOKEN]):
     sys.exit(1)
 
 # --- Constants ---
-DATE_STR = datetime.datetime.now().strftime("%Y-%m-%d")
+DATE_STR = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") # Include time for uniqueness if needed
 BACKUP_ZIP_FILENAME = f"server_backup_{DATE_STR}.zip"
 TEMP_REPO_DIR = 'temp_backup_repo' # Temporary directory to clone the backup repo into
+TEMP_ZIP_FILE_PATH = f"/tmp/{BACKUP_ZIP_FILENAME}" # Temporary location to save the zip before git
 
-# --- FTP Download and Zip (In-Memory) ---
-def ftp_recursive_download_and_zip_in_memory(ftp_client, remote_path, zip_buffer, zip_file):
-    """Recursively downloads files from FTP to an in-memory zip."""
+# --- FTP Download and Zip (using ftplib) ---
+def ftp_recursive_download_and_zip(ftp_client, remote_path, zip_file):
+    """Recursively downloads files from FTP to a zip file object."""
     print(f"Entering remote directory: {remote_path}")
+    original_cwd = ftp_client.pwd() # Store original directory
+
     try:
         ftp_client.cwd(remote_path)
-        items = ftp_client.listdir()
-        print(f"Listing contents: {items}")
+        items = ftp_client.nlst() # Get list of files and directories
 
         for item in items:
-            if item in ['.', '..']:
-                continue
+            # ftplib doesn't have easy isdir/isfile. Try to change directory.
+            # If cwd succeeds, it's a directory. If it fails, it's likely a file.
+            # This is a common ftplib pattern.
+            full_remote_path = f"{remote_path}/{item}".replace('//', '/')
 
-            full_remote_path = f"{remote_path}/{item}".replace('//', '/') # Handle root correctly
-
-            # Check if it's a directory or file. This is tricky with plain FTP.
-            # pysftp.isdir and pysftp.isfile are more reliable than ftplib.nlst checks
             try:
-                if ftp_client.isdir(full_remote_path):
-                    print(f"Found remote directory: {full_remote_path}")
-                    # Create directory in zip (important for empty dirs)
-                    zip_path_in_zip = os.path.relpath(full_remote_path, REMOTE_FTP_ROOT)
-                    if not zip_path_in_zip.endswith('/'):
-                         zip_path_in_zip += '/'
-                    print(f"Adding directory to zip: {zip_path_in_zip}")
+                # Try to change directory - if it works, it's a directory
+                ftp_client.cwd(item)
+                print(f"Found remote directory: {full_remote_path}")
+                # Change back to process contents
+                ftp_client.cwd(original_cwd) # Go back before recursing
+
+                # Create directory in zip (important for empty dirs)
+                zip_path_in_zip = os.path.relpath(full_remote_path, REMOTE_FTP_ROOT)
+                if not zip_path_in_zip.endswith('/'):
+                     zip_path_in_zip += '/'
+                print(f"Adding directory to zip: {zip_path_in_zip}")
+                try:
+                    # ftplib needs the path relative to the initial root being zipped
+                    zip_file.writestr(zip_path_in_zip, "") # Add empty directory entry
+                except Exception as e:
+                     print(f"Error adding directory {zip_path_in_zip} to zip: {e}")
+
+                # Recurse into directory
+                ftp_recursive_download_and_zip(ftp_client, full_remote_path, zip_file)
+
+            except ftplib.error_perm:
+                # If cwd fails, it's likely a file
+                print(f"Found remote file: {full_remote_path}")
+                zip_path_in_zip = os.path.relpath(full_remote_path, REMOTE_FTP_ROOT)
+                print(f"Downloading file and zipping: {zip_path_in_zip}")
+                try:
+                    # ftplib needs the path relative to the current CWD on the server
+                    # Since we change back to original_cwd, we need item here
+                    # Or change CWD to remote_path before calling retrbinary
+                    # Let's change CWD to remote_path temporarily for retrbinary
+                    ftp_client.cwd(remote_path)
+                    with io.BytesIO() as file_buffer:
+                         # ftplib's retrbinary takes a command and a callback
+                         ftp_client.retrbinary(f'RETR {item}', file_buffer.write)
+                         file_buffer.seek(0)
+                         # Add file from buffer to zip
+                         zip_file.writestr(zip_path_in_zip, file_buffer.read())
+                    print(f"Successfully added {zip_path_in_zip} to zip.")
+                    ftp_client.cwd(original_cwd) # Change back
+
+                except Exception as e:
+                    print(f"Error downloading/zipping file {full_remote_path}: {e}")
+                    # Change back in case of error
                     try:
-                        zip_file.writestr(zip_path_in_zip, "") # Add empty directory
-                    except Exception as e:
-                         print(f"Error adding directory {zip_path_in_zip} to zip: {e}")
-                    # Recurse into directory
-                    ftp_recursive_download_and_zip_in_memory(ftp_client, full_remote_path, zip_buffer, zip_file)
-                elif ftp_client.isfile(full_remote_path):
-                    print(f"Found remote file: {full_remote_path}")
-                    zip_path_in_zip = os.path.relpath(full_remote_path, REMOTE_FTP_ROOT)
-                    print(f"Downloading file to memory and zipping: {zip_path_in_zip}")
-                    try:
-                        # Download file directly into BytesIO buffer
-                        file_buffer = io.BytesIO()
-                        ftp_client.getfo(full_remote_path, file_buffer)
-                        file_buffer.seek(0) # Rewind buffer to read from the beginning
+                        ftp_client.cwd(original_cwd)
+                    except:
+                        pass # Ignore if changing back fails
 
-                        # Add file from buffer to zip
-                        zip_file.writestr(zip_path_in_zip, file_buffer.read())
-                        print(f"Successfully added {zip_path_in_zip} to zip.")
-
-                    except Exception as e:
-                        print(f"Error downloading/zipping file {full_remote_path}: {e}")
-            except Exception as e:
-                 # Fallback check or just log error if isdir/isfile fails unexpectedly
-                 print(f"Could not determine type for {full_remote_path}, skipping or attempting as file (pysftp issue?): {e}")
-                 # Optionally, add a fallback to try downloading as a file if type check fails
-                 try:
-                      print(f"Attempting to download {full_remote_path} as file fallback...")
-                      zip_path_in_zip = os.path.relpath(full_remote_path, REMOTE_FTP_ROOT)
-                      file_buffer = io.BytesIO()
-                      ftp_client.getfo(full_remote_path, file_buffer)
-                      file_buffer.seek(0)
-                      zip_file.writestr(zip_path_in_zip, file_buffer.read())
-                      print(f"Successfully added {zip_path_in_zip} to zip via fallback.")
-                 except Exception as fallback_e:
-                      print(f"Fallback download for {full_remote_path} failed: {fallback_e}")
-
-
+    except ftplib.error_perm as e:
+        print(f"Permission error accessing directory {remote_path}: {e}")
+        # This might happen if list permissions are denied. Log and continue.
     except Exception as e:
         print(f"Error processing directory {remote_path}: {e}")
-        # Depending on severity, you might want to sys.exit(1) here
-        # For now, we'll try to continue with other directories if possible
+        # Change back in case of error
+        try:
+            ftp_client.cwd(original_cwd)
+        except:
+            pass # Ignore if changing back fails
 
 # --- GitHub Interaction ---
-def setup_git_credentials(token, repo_url):
-    """Sets up Git credentials using the token for the specific repo."""
+def setup_git_credentials():
+    """Sets up Git credentials for the runner."""
     print("Setting up Git credentials...")
-    # Use git config to store credentials temporarily
-    # WARNING: Ensure this is run in a secure environment like GitHub Actions
-    # This avoids writing the token to a file on the runner.
-    # However, using a Git URL with the token embedded is often simpler in Actions.
-    # e.g., https://oauth2:${{ secrets.GITHUB_TOKEN }}@github.com/user/repo.git
-    # Let's use the simpler URL embedding approach for the clone command.
-    pass # No explicit setup needed if embedding token in URL
+    try:
+        subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], check=True)
+        subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Actions'], check=True)
+        print("Git user configured.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error configuring git user: {e}")
+        sys.exit(1)
 
-def clone_backup_repo(repo_url_with_token, target_dir):
-    """Clones the backup repository."""
-    print(f"Cloning backup repository {repo_url_with_token} into {target_dir}...")
+
+def clone_backup_repo(repo_url, token, target_dir):
+    """Clones the backup repository using the token."""
+    print(f"Cloning backup repository {repo_url} into {target_dir}...")
+    # Embed token in the URL for cloning
+    repo_url_with_token = repo_url.replace('https://github.com/', f'https://oauth2:{token}@github.com/', 1)
+    repo_url_with_token = repo_url_with_token.replace('http://github.com/', f'http://oauth2:{token}@github.com/', 1)
+
     try:
         subprocess.run(['git', 'clone', repo_url_with_token, target_dir], check=True)
         print("Repository cloned successfully.")
@@ -123,147 +138,152 @@ def clone_backup_repo(repo_url_with_token, target_dir):
 def add_and_commit_backup(repo_dir, backup_filepath):
     """Adds, commits the new backup, and removes old ones."""
     print(f"Changing directory to {repo_dir}")
+    original_dir = os.getcwd()
     os.chdir(repo_dir)
 
-    # Configure Git user (required for commit)
-    subprocess.run(['git', 'config', 'user.email', 'action@github.com'], check=True)
-    subprocess.run(['git', 'config', 'user.name', 'GitHub Actions'], check=True)
-    print("Git user configured.")
-
-    # Find and delete old backups in the backup folder
-    backup_dir_full_path = os.path.join(os.getcwd(), BACKUP_FOLDER_IN_REPO)
-    if os.path.exists(backup_dir_full_path):
-        print(f"Looking for old backups in {backup_dir_full_path}")
-        for filename in os.listdir(backup_dir_full_path):
-            if filename.startswith("server_backup_") and filename.endswith(".zip") and filename != os.path.basename(backup_filepath):
-                old_file_path = os.path.join(backup_dir_full_path, filename)
-                print(f"Found old backup, attempting to remove: {old_file_path}")
-                try:
-                    subprocess.run(['git', 'rm', '-f', old_file_path], check=True)
-                    print(f"Removed {old_file_path}")
-                except subprocess.CalledProcessError as e:
-                    print(f"Error removing old backup {old_file_path}: {e}")
-                    # Continue trying to remove others, but log the error
-
-    # Add the new backup file
-    new_backup_target_path = os.path.join(BACKUP_FOLDER_IN_REPO, os.path.basename(backup_filepath))
-    print(f"Adding new backup file to git: {new_backup_target_path}")
     try:
-        # Ensure the target directory exists in the cloned repo
-        os.makedirs(os.path.dirname(new_backup_target_path), exist_ok=True)
-        # Move the created zip file into the repository's backup folder
-        shutil.move(backup_filepath, new_backup_target_path)
-        print(f"Moved created zip to {new_backup_target_path}")
+        # Find and delete old backups in the backup folder
+        backup_dir_full_path = os.path.join(os.getcwd(), BACKUP_FOLDER_IN_REPO)
+        if os.path.exists(backup_dir_full_path):
+            print(f"Looking for old backups in {backup_dir_full_path}")
+            # Use glob to find files matching the pattern
+            old_backups = sorted(glob.glob(os.path.join(backup_dir_full_path, "server_backup_*.zip")))
+            if old_backups:
+                print(f"Found potential old backups: {old_backups}")
+                # Get the filename of the new backup being added
+                new_backup_filename = os.path.basename(backup_filepath)
 
-        subprocess.run(['git', 'add', new_backup_target_path], check=True)
-        print("New backup file added to staging.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error adding new backup file {new_backup_target_path}: {e}")
-        sys.exit(1)
+                for old_file_path in old_backups:
+                    if os.path.basename(old_file_path) != new_backup_filename:
+                        print(f"Found old backup, attempting to remove: {old_file_path}")
+                        try:
+                            # Use git rm to remove the file and stage the deletion
+                            subprocess.run(['git', 'rm', '-f', old_file_path], check=True)
+                            print(f"Staged removal of {old_file_path}")
+                        except subprocess.CalledProcessError as e:
+                            print(f"Error staging removal of old backup {old_file_path}: {e}")
+                            # Log error, but try to continue with other files
+
+        # Add the new backup file
+        new_backup_target_dir = os.path.join(os.getcwd(), BACKUP_FOLDER_IN_REPO)
+        os.makedirs(new_backup_target_dir, exist_ok=True) # Ensure target directory exists
+        new_backup_target_path = os.path.join(new_backup_target_dir, os.path.basename(backup_filepath))
+
+        print(f"Copying new backup file into repository: {new_backup_target_path}")
+        shutil.copy2(backup_filepath, new_backup_target_path) # Use copy2 to preserve metadata if needed
+        print(f"Copied created zip to {new_backup_target_path}")
+
+        # Add the new backup file to staging
+        print(f"Adding new backup file to git staging: {new_backup_target_path}")
+        try:
+            subprocess.run(['git', 'add', new_backup_target_path], check=True)
+            print("New backup file added to staging.")
+        except subprocess.CalledProcessError as e:
+            print(f"Error adding new backup file {new_backup_target_path}: {e}")
+            sys.exit(1)
+
+        # Commit changes
+        # Check if there are any staged changes before committing
+        status_output = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, check=True).stdout.strip()
+        if status_output:
+            commit_message = f"Automated backup: {os.path.basename(backup_filepath)}"
+            print(f"Committing with message: '{commit_message}'")
+            try:
+                subprocess.run(['git', 'commit', '-m', commit_message], check=True)
+                print("Changes committed.")
+            except subprocess.CalledProcessError as e:
+                print(f"Error committing changes: {e}")
+                # If commit fails, something is wrong. Exit.
+                sys.exit(1)
+        else:
+            print("No changes detected by git status. Skipping commit.")
 
 
-    # Commit changes
-    commit_message = f"Automated backup: {BACKUP_ZIP_FILENAME}"
-    print(f"Committing with message: '{commit_message}'")
-    try:
-        subprocess.run(['git', 'commit', '-m', commit_message], check=True)
-        print("Changes committed.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error committing changes: {e}. This might happen if there were no changes (e.g., no old backup found, or the new one is identical).")
-        # Allow failure here, it might just mean nothing changed or no old file to remove
+        # Push changes
+        print("Pushing changes to remote repository...")
+        try:
+            # Use the token embedded URL for pushing
+            # Get the current remote URL from the cloned repo config
+            remote_name = subprocess.run(['git', 'remote'], capture_output=True, text=True, check=True).stdout.strip()
+            if not remote_name:
+                 print("Error: Could not determine git remote name.")
+                 sys.exit(1)
+            original_remote_url = subprocess.run(['git', 'remote', 'get-url', remote_name], capture_output=True, text=True, check=True).stdout.strip()
+             # Replace potential http/https with token embedded version for push
+            push_url = original_remote_url.replace('https://github.com/', f'https://oauth2:{GITHUB_TOKEN}@github.com/', 1)
+            push_url = push_url.replace('http://github.com/', f'http://oauth2:{GITHUB_TOKEN}@github.com/', 1)
 
-    # Push changes
-    print("Pushing changes to remote repository...")
-    try:
-        # Use the token embedded URL for pushing
-        # Need the original remote URL here
-        # Let's get the remote URL from the cloned repo config
-        remote_name = subprocess.run(['git', 'remote'], capture_output=True, text=True, check=True).stdout.strip()
-        if not remote_name:
-             print("Error: Could not determine git remote name.")
-             sys.exit(1)
-        # Reconstruct the URL with token for the push command
-        # Assuming the original URL was HTTPS. Adjust if SSH is used.
-        original_remote_url = subprocess.run(['git', 'remote', 'get-url', remote_name], capture_output=True, text=True, check=True).stdout.strip()
-        # Replace potential http/https with token embedded version
-        push_url = original_remote_url.replace('https://github.com/', f'https://oauth2:{GITHUB_TOKEN}@github.com/', 1)
-        push_url = push_url.replace('http://github.com/', f'http://oauth2:{GITHUB_TOKEN}@github.com/', 1)
+            # Push the current branch (HEAD) to its upstream
+            current_branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
 
-        print(f"Pushing to {push_url}...")
-        # Use --set-upstream to push correctly the first time
-        current_branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
-        subprocess.run(['git', 'push', push_url, f'HEAD:{current_branch}'], check=True)
-        print("Changes pushed successfully.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error pushing changes: {e}")
-        sys.exit(1)
+            # Use --force-with-lease if overwriting history (e.g. always having only 1 backup file)
+            # Or standard push if keeping history (e.g. keeping multiple dated backups)
+            # With deleting old ones, standard push should work unless there are merge conflicts (unlikely in a dedicated backup repo)
+            print(f"Pushing from branch {current_branch} to {push_url}")
+            subprocess.run(['git', 'push', push_url, current_branch], check=True)
+            print("Changes pushed successfully.")
+        except subprocess.CalledProcessError as e:
+            print(f"Error pushing changes: {e}")
+            sys.exit(1)
+    except Exception as e:
+         print(f"An unexpected error occurred during git operations: {e}")
+         sys.exit(1)
     finally:
-        # Change back to the original directory before the script exits
-        os.chdir('../..') # Assuming script starts from repo root, moves to temp_backup_repo, need to go up two levels
+        # Change back to the original directory
+        os.chdir(original_dir)
+
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    backup_zip_path = BACKUP_ZIP_FILENAME # Create zip in the current working directory initially
+    # We will write the zip to a temporary file on the runner before adding to git
+    # This avoids potential memory issues with very large backups if the in-memory approach struggles.
+    # It's still 'zero local file' from your PC perspective.
 
-    # 1. Perform FTP Download and Zipping (In-Memory)
-    print("Starting FTP download and in-memory zipping...")
-    zip_buffer = io.BytesIO()
+    # 1. Perform FTP Download and Zipping to a temporary file
+    print("Starting FTP download and zipping to temporary file...")
     try:
-        # Use pysftp for potentially better handling
-        cnopts = pysftp.CnOpts()
-        cnopts.hostkeys = None # WARNING: Disable host key checking - use known_hosts in production!
-                               # For a temporary runner, this is often necessary but less secure.
-                               # For a persistent runner (VPS), configure known_hosts properly.
-
         print(f"Connecting to FTP: {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
-        with pysftp.Connection(FTP_HOST, username=FTP_USERNAME, password=FTP_PASSWORD, port=FTP_PORT, cnopts=cnopts) as sftp:
+        # Use ftplib for standard FTP
+        with ftplib.FTP() as ftp:
+             ftp.connect(FTP_HOST, FTP_PORT)
+             ftp.login(user=FTP_USERNAME, passwd=FTP_PASSWORD)
              print("FTP connection successful.")
-             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                 ftp_recursive_download_and_zip_in_memory(sftp, REMOTE_FTP_ROOT, zip_buffer, zip_file)
-             print("FTP download and zipping complete.")
+
+             with zipfile.ZipFile(TEMP_ZIP_FILE_PATH, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                 ftp_recursive_download_and_zip(ftp, REMOTE_FTP_ROOT, zip_file)
+
+             print(f"FTP download and zipping complete. Zip saved to {TEMP_ZIP_FILE_PATH}")
 
     except Exception as e:
         print(f"Failed during FTP process: {e}")
         sys.exit(1)
 
-    # Write the in-memory zip buffer to a temporary file to be added to Git
-    try:
-        zip_buffer.seek(0) # Rewind buffer
-        with open(backup_zip_path, 'wb') as f:
-            f.write(zip_buffer.read())
-        print(f"In-memory zip written to temporary file: {backup_zip_path}")
-    except Exception as e:
-        print(f"Error writing zip buffer to file: {e}")
-        sys.exit(1)
-
     # 2. Clone Backup Repo, Add Backup, Remove Old, Commit, Push
     print("Starting GitHub backup process...")
-    # Embed token in URL for cloning and pushing
-    repo_url_with_token = BACKUP_REPO_URL.replace('https://github.com/', f'https://oauth2:{GITHUB_TOKEN}@github.com/', 1)
-    repo_url_with_token = repo_url_with_token.replace('http://github.com/', f'http://oauth2:{GITHUB_TOKEN}@github.com/', 1)
 
+    # Clean up temp dir if it exists from a previous failed run
+    if os.path.exists(TEMP_REPO_DIR):
+        print(f"Removing existing temporary repository directory: {TEMP_REPO_DIR}")
+        shutil.rmtree(TEMP_REPO_DIR)
 
     try:
-        # Clean up temp dir if it exists from a previous failed run
-        if os.path.exists(TEMP_REPO_DIR):
-            print(f"Removing existing temporary repository directory: {TEMP_REPO_DIR}")
-            shutil.rmtree(TEMP_REPO_DIR)
-
-        clone_backup_repo(repo_url_with_token, TEMP_REPO_DIR)
-        add_and_commit_backup(TEMP_REPO_DIR, backup_zip_path) # backup_zip_path is moved inside this function
+        setup_git_credentials()
+        clone_backup_repo(BACKUP_REPO_URL, GITHUB_TOKEN, TEMP_REPO_DIR)
+        add_and_commit_backup(TEMP_REPO_DIR, TEMP_ZIP_FILE_PATH) # Use the path to the temp zip file
         print("GitHub backup process completed.")
     except Exception as e:
         print(f"Failed during GitHub process: {e}")
+        # Note: Git operations might fail for various reasons (network, permissions, etc.)
         sys.exit(1)
     finally:
         # Clean up the temporary repository directory
         if os.path.exists(TEMP_REPO_DIR):
             print(f"Cleaning up temporary repository directory: {TEMP_REPO_DIR}")
             shutil.rmtree(TEMP_REPO_DIR)
-        # Also clean up the temporary zip file if it wasn't moved/deleted
-        if os.path.exists(backup_zip_path):
-             print(f"Cleaning up temporary zip file: {backup_zip_path}")
-             os.remove(backup_zip_path)
+        # Clean up the temporary zip file
+        if os.path.exists(TEMP_ZIP_FILE_PATH):
+             print(f"Cleaning up temporary zip file: {TEMP_ZIP_FILE_PATH}")
+             os.remove(TEMP_ZIP_FILE_PATH)
 
 
-    print("Daily automation script finished.")
+    print("Daily automation script finished successfully.")
