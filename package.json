@@ -1,0 +1,12 @@
+{
+  "name": "minefort-bot-automation",
+  "version": "1.0.0",
+  "description": "Minefort server automation bot",
+  "main": "src/start_bot.js",
+  "scripts": {
+    "start": "node src/start_bot.js"
+  },
+  "dependencies": {
+    "mineflayer": "^4.16.2"
+  }
+}
