@@ -19,64 +19,49 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # --- ADDED CACHE CLEARING STEPS ---
-    - name: Clear npm cache
-      run: npm cache clean --force
-
-    - name: Clear GitHub Actions cache for node_modules
-      # This uses a specific action to clear caches
-      # You might need to add 'actions/cache@v4' to your workflow uses permissions if not already present
-      uses: actions/cache@v4
-      with:
-        path: node_modules
-        key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-        restore-keys: |
-          ${{ runner.os }}-node-
-      # The 'restore' behavior is default, but we want to 'save' an empty cache or remove if needed
-      # A direct way to remove cache keys might require GitHub API or a specific action.
-      # This step primarily ensures a clean install afterwards by invalidating/missing key.
-
-    - name: Explicitly remove node_modules directory
-      run: rm -rf node_modules
-    # --- END ADDED CACHE CLEARING STEPS ---
-
-
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '20' # Use a recent stable Node.js version
 
-    - name: Install Node.js dependencies
+    - name: Install Node.js dependencies (including Playwright)
       run: npm install
       working-directory: . # Assumes package.json is at the repo root
+
+    - name: Install Playwright Browsers
+      # This command downloads the necessary browser binaries (Chromium, Firefox, WebKit)
+      run: npx playwright install --with-deps
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.x' # Use a recent Python 3 version
+        python-version: '3.x'
 
-    # Note: ftplib is a built-in Python library, no need for pip install unless you added other libs
+    # Note: ftplib is a built-in Python library, no need to install from requirements.txt
     # If you need other libs later, uncomment and add them to requirements.txt
     # - name: Install Python dependencies
     #   run: pip install -r requirements.txt
     #   working-directory: .
 
 
-    - name: Run Mineflayer Bot to Start Server and Wait (Simplified)
-      # Bot connects to lobby, sends /start, waits fixed time, exits.
-      # This step should exit 0 if it runs through the fixed wait without connection errors.
-      run: node src/start_bot.js
+    - name: Run Playwright Server Starter
+      # This script logs into Minefort and clicks the start buttons
+      # It will exit successfully (0) if the process completes, or with error (1) if it fails
+      run: node src/start_server_playwright.js
       env:
+        MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
+        MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
         MINEFORT_SERVER_NAME: ${{ secrets.MINEFORT_SERVER_NAME }} # Should be 'ForAboniii'
-      # If this step fails, the subsequent steps will be skipped (default behavior)
+      # If this step fails, the subsequent backup step will be skipped (default behavior)
       # continue-on-error: false # This is the default, making it explicit here
 
+
     - name: Run Backup and Upload Script
-      # This step will only run if the previous 'Run Mineflayer Bot' step succeeded
+      # This step will only run if the previous 'Run Playwright Server Starter' step succeeded
       run: python src/backup_and_upload.py
       env:
         FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
         FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use the default GITHUB_TOKEN secret
-      # permissions is NOT needed here, it's at the job level
+      # permissions is set at the job level above
