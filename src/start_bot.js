@@ -2,11 +2,10 @@ const mineflayer = require('mineflayer');
 const { setTimeout } = require('timers/promises');
 
 const serverName = process.env.MINEFORT_SERVER_NAME; // e.g., 'ForAboniii'
-// We no longer strictly need targetServerHost/Port for bot logic,
-// but keep serverName for the /start command.
+const targetServerHost = `${serverName}.minefort.com`;
+const targetServerPort = 25565;
 const lobbyHost = 'play.minefort.com';
-const targetServerPort = 25565; // Standard Minecraft Java port for connection
-const botUsername = "AutomationBot"; // Choose a static username for the offline mode bot
+const botUsername = "AutomationBot";
 
 if (!serverName) {
     console.error('Error: MINEFORT_SERVER_NAME environment variable must be set.');
@@ -16,86 +15,123 @@ if (!serverName) {
 console.log(`Attempting to connect to Minefort lobby (${lobbyHost}:${targetServerPort}) as offline player "${botUsername}"...`);
 
 const bot = mineflayer.createBot({
-  host: lobbyHost, // Connect to lobby host
-  port: targetServerPort, // Use the standard Minecraft port
+  host: lobbyHost,
+  port: targetServerPort,
   username: botUsername,
-  offline: true, // Use offline mode
-  version: false // Let mineflayer detect the version
+  offline: true,
+  version: false
 });
 
 let startCommandSent = false;
 
 bot.on('login', () => {
-  console.log(`Bot logged into ${bot.options.host}:${bot.options.port} as ${bot.username}.`);
+  console.log('--- LOGIN Event Fired ---');
+  console.log(`Bot logged in as ${bot.username}.`);
+  console.log(`Bot options: ${JSON.stringify(bot.options)}`); // Log options
+  console.log(`Bot currentServer: ${JSON.stringify(bot.currentServer)}`); // currentServer is often null on login
+  console.log('-------------------------');
+
+  // The previous error was pointing near here, let's see what these logs show.
+  // No complex logic in login, just logging.
 });
 
 bot.on('spawn', async () => {
-    console.log('Bot spawned in the lobby.');
+    console.log('--- SPAWN Event Fired ---');
+    console.log(`Bot spawned.`);
+    console.log(`Bot options: ${JSON.stringify(bot.options)}`); // Log options again
+    console.log(`Bot currentServer: ${JSON.stringify(bot.currentServer)}`); // This should contain server info if successful
+    console.log('-------------------------');
 
-    if (!startCommandSent) {
-        startCommandSent = true;
-        await setTimeout(5000); // Wait 5 seconds after spawn before sending command
-        console.log(`Sending start command: /start ${serverName}`);
-        bot.chat(`/start ${serverName}`);
-        console.log(`Start command sent. Waiting 3 minutes for server to start before exiting...`);
 
-        // --- FIXED WAIT TIME AFTER SENDING COMMAND ---
-        const fixedWaitAfterCommand = 3 * 60 * 1000; // 3 minutes in milliseconds
-        await setTimeout(fixedWaitAfterCommand);
-        console.log('Fixed wait time finished. Assuming server has had time to start. Disconnecting bot.');
+    // *** ADDED TRY...CATCH BLOCK ***
+    try {
+        // The logic within spawn was simplified significantly.
+        // The error was pointing near the start of this handler.
+        // Let's see if the logs above reveal anything before a potential error here.
+
+        // The only core logic remaining here is sending the command and setting the fixed timeout
+        if (!startCommandSent) {
+            startCommandSent = true;
+            await setTimeout(5000); // Wait 5 seconds after spawn before sending command
+            console.log(`Sending start command: /start ${serverName}`);
+            bot.chat(`/start ${serverName}`);
+            console.log(`Start command sent. Waiting 3 minutes for server to start before exiting...`);
+
+            const fixedWaitAfterCommand = 3 * 60 * 1000; // 3 minutes
+            await setTimeout(fixedWaitAfterCommand);
+            console.log('Fixed wait time finished. Assuming server has had time to start. Disconnecting bot.');
+            bot.quit();
+            console.log('Bot disconnected.');
+            process.exit(0); // Exit successfully
+        } else {
+             console.log("Spawn event fired again after command sent. Fixed timeout is active.");
+        }
+    } catch (e) {
+        console.error(`Error inside SPAWN event handler: ${e.message}`);
+        // This might help capture errors happening within the async part
         bot.quit();
-        console.log('Bot disconnected.');
-        process.exit(0); // Exit successfully after waiting
-        // --- END FIXED WAIT TIME ---
+        process.exit(1);
     }
-    // If spawn fires again (e.g., after transfer), and command was already sent,
-    // the fixed timeout is already running, just log it.
-     console.log("Spawn event fired again after command sent. Fixed timeout is active.");
-
+    // --- END TRY...CATCH BLOCK ---
 });
 
-// Basic error handlers to prevent hanging and provide info
+
+// Basic error handlers
 bot.on('kicked', (reason, loggedIn) => {
+  console.error(`--- KICKED Event Fired ---`);
   console.error(`Bot kicked. Reason: ${reason} LoggedIn: ${loggedIn}`);
-  process.exit(1); // Any kick is a failure in this simplified flow
+  console.error('--------------------------');
+  process.exit(1);
 });
 
 bot.on('error', (err) => {
+  console.error(`--- ERROR Event Fired ---`);
   console.error(`Bot error: ${err.message}`);
-  // Log common error types
-  if (err.message.includes('Invalid credentials')) {
+   if (err.message.includes('Invalid credentials')) {
       console.error("Authentication failed. Ensure server is in offline mode and bot username is valid ('AutomationBot').");
   } else if (err.message.includes('connect ECONNREFUSED')) {
       console.error("Connection refused. Is the lobby address play.minefort.com correct? Is port 25565 open?");
   } else if (err.message.includes('unsupported/unknown protocol version')) {
-       console.error("Protocol version error during handshake. This might happen if connecting to the wrong address or a non-Minecraft service.");
+       console.error("Protocol version error during handshake.");
   } else if (err.message.includes('ETIMEDOUT')) {
        console.error("Connection timed out.");
   } else {
        console.error("An unhandled bot error occurred.");
   }
-  process.exit(1); // Any error is a failure
+  console.error('-------------------------');
+  process.exit(1);
 });
 
 bot.on('end', (reason) => {
+    console.error(`--- END Event Fired ---`);
     console.log(`Bot disconnected from server. Reason: ${reason}`);
-    // In this simplified flow, we only exit 0 after the fixed wait.
-    // If 'end' happens before that, it's a failure.
-    console.error("Bot disconnected unexpectedly before completing its task.");
-    process.exit(1);
+    console.error('-----------------------');
+    // If the script hasn't exited successfully already, assume this end is a failure.
+    // The overall timeout or a preceding error handler should catch failures,
+    // but this is a fallback.
+    if (!process.exitCode || process.exitCode === 0) {
+         console.error("Bot ended before successful completion.");
+         process.exit(1);
+    }
 });
 
 
 console.log('Mineflayer bot script started.');
 
-// Set an overall timeout for the entire bot script execution
-// This should be longer than the fixed wait time (3 mins + 5s spawn delay)
-const overallTimeout = 5 * 60 * 1000; // 5 minutes overall timeout (e.g., 3 mins wait + buffer)
+// Overall timeout
+const overallTimeout = 7 * 60 * 1000; // 7 minutes
 console.log(`Setting overall bot script timeout to ${overallTimeout / 1000} seconds.`);
-const timeoutId = setTimeout(overallTimeout, null, { ref: false }) // Use reference-less timer
+setTimeout(overallTimeout)
   .then(() => {
-      // This part only runs if the script hasn't already exited (e.g. due to success or error)
-      console.error(`Overall timeout reached: Bot script did not complete within ${overallTimeout / 1000} seconds.`);
-      bot.quit(); // Ensure bot is disconnected
-      process.exit(1); // Exit with error code
+      // If process hasn't exited by now, it's a timeout failure
+      if (!process.exitCode || process.exitCode === 0) {
+          console.error(`Overall timeout reached: Bot script did not complete within ${overallTimeout / 1000} seconds.`);
+          bot.quit();
+          process.exit(1);
+      }
+  })
+  .catch(err => {
+      console.error(`Error with overall timeout mechanism: ${err.message}`);
+      bot.quit();
+      process.exit(1);
   });
