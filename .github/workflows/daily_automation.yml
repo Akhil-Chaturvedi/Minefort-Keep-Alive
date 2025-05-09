@@ -1,0 +1,66 @@
+name: Daily Minefort Keep-Alive and Backup
+
+on:
+  schedule:
+    # Run every day at 03:00 UTC (adjust time as needed)
+    # Use a tool like crontab.guru to pick your desired UTC time
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    # Allows you to manually trigger the workflow from the Actions tab
+
+jobs:
+  automate:
+    runs-on: ubuntu-latest # Use a standard Ubuntu runner provided by GitHub
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20' # Use a recent stable Node.js version
+
+    - name: Install Node.js dependencies
+      run: npm install
+      working-directory: . # Assumes package.json is at the repo root
+
+    - name: Run Mineflayer Bot to Start Server
+      run: npm start
+      working-directory: . # Assumes start_bot.js is run via npm start from repo root
+      env:
+        MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
+        MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
+        MINEFORT_SERVER_NAME: ${{ secrets.MINEFORT_SERVER_NAME }}
+      # Continue even if bot script fails - backup is more critical
+      continue-on-error: true
+
+    - name: Wait for Server to Start
+      # Add a wait period to ensure the server has time to boot after the bot command
+      # Adjust this duration based on how long your server usually takes to start
+      run: sleep 120 # Wait for 120 seconds (2 minutes)
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x' # Use a recent Python 3 version
+
+    - name: Install Python dependencies
+      run: pip install -r requirements.txt
+      working-directory: . # Assumes requirements.txt is at the repo root
+
+    - name: Run Backup and Upload Script
+      run: python src/backup_and_upload.py
+      working-directory: . # Run from repo root
+      env:
+        FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+        FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use the default GITHUB_TOKEN secret
+        # You might need to grant 'contents: write' permission to the GITHUB_TOKEN
+        # See job permissions below
+      # This step is critical, fail the job if it fails
+      # continue-on-error: false # This is the default behavior
+
+    permissions:
+      contents: write # Grant write permissions to the GITHUB_TOKEN for cloning/pushing
