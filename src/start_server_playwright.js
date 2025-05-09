@@ -69,9 +69,8 @@ const COOKIE_DENY_BUTTON_SELECTOR = '#CybotCookiebotDialogBodyButtonDecline'; //
     await page.click(SIGN_IN_BUTTON_SELECTOR);
 
     // Wait for successful login and potential redirect (usually back to /servers or dashboard)
-    // We don't need to wait for the specific /servers URL anymore
     console.log('Waiting for successful login (expecting navigation away from login page)...');
-    // Corrected: Check the pathname of the URL object
+    // Corrected line: Check the pathname of the URL object
     await page.waitForURL(url => url.pathname !== '/login', { timeout: 30000 });
     console.log(`Login successful. Current URL: ${page.url()}`);
 
