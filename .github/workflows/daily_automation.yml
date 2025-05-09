@@ -12,11 +12,10 @@ jobs:
   automate:
     runs-on: ubuntu-latest # Use a standard Ubuntu runner provided by GitHub
 
-    permissions: # <--- CORRECT LOCATION: This is at the job level
+    permissions:
       contents: write # Grant write permissions to the GITHUB_TOKEN for cloning/pushing
 
-    steps: # <--- Steps start here, after permissions
-
+    steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -34,7 +33,7 @@ jobs:
       with:
         python-version: '3.x' # Use a recent Python 3 version
 
-    # Note: ftplib is a built-in Python library, no need to install from requirements.txt
+    # Note: ftplib is a built-in Python library, no need for pip install unless you added other libs
     # If you need other libs later, uncomment and add them to requirements.txt
     # - name: Install Python dependencies
     #   run: pip install -r requirements.txt
@@ -42,18 +41,17 @@ jobs:
 
 
     - name: Run Mineflayer Bot to Start Server and Wait for Join
-      # This step will only succeed (exit 0) if the bot successfully joins the target server world
-      # If it fails (e.g., login failed, command failed, timeout), it will exit non-zero
+      # Bot connects to server IP, lands in lobby if off, sends /start, waits for transfer to target server world.
+      # This step will only succeed (exit 0) if the bot successfully joins the target server world and idles.
+      # If it fails (e.g., connection failure, lobby issue, transfer timeout), it will exit non-zero.
       run: node src/start_bot.js
       env:
-        MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
-        MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
         MINEFORT_SERVER_NAME: ${{ secrets.MINEFORT_SERVER_NAME }} # Should be 'ForAboniii'
       # If this step fails, the subsequent steps will be skipped (default behavior)
       # continue-on-error: false # This is the default, making it explicit here
 
     - name: Run Backup and Upload Script
-      # This step will only run if the previous 'Run Mineflayer Bot' step succeeded
+      # This step will only run if the previous 'Run Mineflayer Bot' step succeeded (meaning the server is likely online)
       run: python src/backup_and_upload.py
       env:
         FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
