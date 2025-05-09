@@ -1,12 +1,12 @@
 {
-  "name": "minefort-bot-automation",
+  "name": "minefort-automation",
   "version": "1.0.0",
-  "description": "Minefort server automation bot",
-  "main": "src/start_bot.js",
+  "description": "Automate Minefort server startup and backup",
+  "main": "src/start_server_playwright.js",
   "scripts": {
-    "start": "node src/start_bot.js"
+    "start": "node src/start_server_playwright.js"
   },
   "dependencies": {
-    "mineflayer": "^4.16.2"
+    "@playwright/test": "^1.44.1"
   }
 }
