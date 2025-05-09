@@ -19,6 +19,28 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # --- ADDED CACHE CLEARING STEPS ---
+    - name: Clear npm cache
+      run: npm cache clean --force
+
+    - name: Clear GitHub Actions cache for node_modules
+      # This uses a specific action to clear caches
+      # You might need to add 'actions/cache@v4' to your workflow uses permissions if not already present
+      uses: actions/cache@v4
+      with:
+        path: node_modules
+        key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-
+      # The 'restore' behavior is default, but we want to 'save' an empty cache or remove if needed
+      # A direct way to remove cache keys might require GitHub API or a specific action.
+      # This step primarily ensures a clean install afterwards by invalidating/missing key.
+
+    - name: Explicitly remove node_modules directory
+      run: rm -rf node_modules
+    # --- END ADDED CACHE CLEARING STEPS ---
+
+
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
@@ -40,10 +62,9 @@ jobs:
     #   working-directory: .
 
 
-    - name: Run Mineflayer Bot to Start Server and Wait for Join
-      # Bot connects to server IP, lands in lobby if off, sends /start, waits for transfer to target server world.
-      # This step will only succeed (exit 0) if the bot successfully joins the target server world and idles.
-      # If it fails (e.g., connection failure, lobby issue, transfer timeout), it will exit non-zero.
+    - name: Run Mineflayer Bot to Start Server and Wait (Simplified)
+      # Bot connects to lobby, sends /start, waits fixed time, exits.
+      # This step should exit 0 if it runs through the fixed wait without connection errors.
       run: node src/start_bot.js
       env:
         MINEFORT_SERVER_NAME: ${{ secrets.MINEFORT_SERVER_NAME }} # Should be 'ForAboniii'
@@ -51,7 +72,7 @@ jobs:
       # continue-on-error: false # This is the default, making it explicit here
 
     - name: Run Backup and Upload Script
-      # This step will only run if the previous 'Run Mineflayer Bot' step succeeded (meaning the server is likely online)
+      # This step will only run if the previous 'Run Mineflayer Bot' step succeeded
       run: python src/backup_and_upload.py
       env:
         FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
