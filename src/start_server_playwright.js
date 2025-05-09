@@ -18,6 +18,9 @@ const SERVER_CARD_SELECTOR = `div:has(h5:has-text("${MINEFORT_SERVER_NAME}"))`;
 // Selectors for buttons *within* the server card
 const WAKE_UP_BUTTON_SELECTOR = 'button:has-text("Wake up")';
 const START_SERVER_BUTTON_SELECTOR = 'button:has-text("Start server")';
+// --- Cookie Dialog Selectors ---
+const COOKIE_DIALOG_SELECTOR = '#CybotCookiebotDialog'; // Selector for the main dialog
+const COOKIE_DENY_BUTTON_SELECTOR = '#CybotCookiebotDialogBodyButtonDecline'; // Selector for the "Deny" button
 // --- End Selectors ---
 
 
@@ -35,11 +38,33 @@ const START_SERVER_BUTTON_SELECTOR = 'button:has-text("Start server")';
     console.log(`Navigating to login page: ${LOGIN_URL}`);
     await page.goto(LOGIN_URL);
 
+    // --- ADDED: Handle Cookie Consent Dialog ---
+    console.log('Checking for cookie consent dialog...');
+    const cookieDialog = page.locator(COOKIE_DIALOG_SELECTOR);
+    if (await cookieDialog.isVisible({ timeout: 10000 })) { // Check visibility with a timeout
+        console.log('Cookie consent dialog found. Attempting to dismiss...');
+        const denyButton = page.locator(COOKIE_DENY_BUTTON_SELECTOR);
+        if (await denyButton.isVisible()) {
+            console.log('Clicking "Deny" on cookie dialog...');
+            await denyButton.click();
+            console.log('Cookie dialog dismissed.');
+            // Wait for the dialog to disappear
+            await cookieDialog.waitFor({ state: 'hidden', timeout: 5000 });
+        } else {
+            console.warn('Cookie dialog visible, but "Deny" button not found. Proceeding anyway.');
+        }
+    } else {
+        console.log('Cookie consent dialog not found or did not appear.');
+    }
+    // --- END ADDED: Handle Cookie Consent Dialog ---
+
+
     console.log('Filling login form...');
     await page.fill(EMAIL_INPUT_SELECTOR, MINEFORT_EMAIL);
     await page.fill(PASSWORD_INPUT_SELECTOR, MINEFORT_PASSWORD);
 
     console.log('Clicking Sign In button...');
+    // Now the click should not be intercepted by the cookie dialog
     await page.click(SIGN_IN_BUTTON_SELECTOR);
 
     console.log(`Waiting for navigation to servers page: ${SERVERS_URL}`);
@@ -52,17 +77,20 @@ const START_SERVER_BUTTON_SELECTOR = 'button:has-text("Start server")';
     const serverCard = await page.locator(SERVER_CARD_SELECTOR).first();
 
     if (await serverCard.count() === 0) {
-        console.error(`Error: Could not find server card for "${MINEFORT_SERVER_NAME}". Make sure the server name is correct and visible on the dashboard.`);
+        console.error(`Error: Could not find server card for "${MINEFORT_SERVER_NAME}". Make sure the server name is correct ("${MINEFORT_SERVER_NAME}") and visible on the dashboard.`);
+        // Attempt to take a screenshot for debugging if the server card isn't found
+        await page.screenshot({ path: 'server_card_not_found_error.png' });
+        console.log('Screenshot saved as server_card_not_found_error.png');
         process.exit(1);
     }
     console.log(`Found server card for "${MINEFORT_SERVER_NAME}".`);
 
     // Check if the server is sleeping (Wake up button is visible)
     const wakeUpButton = serverCard.locator(WAKE_UP_BUTTON_SELECTOR);
-    if (await wakeUpButton.isVisible()) {
+    if (await wakeUpButton.isVisible({ timeout: 5000 })) { // Check visibility with a short timeout
         console.log('Server is sleeping. Clicking "Wake up" button...');
         await wakeUpButton.click();
-        console.log('Clicked "Wake up". Waiting 10 seconds...');
+        console.log('Clicked "Wake up". Waiting 10 seconds for state change...');
         await page.waitForTimeout(10000); // Wait 10 seconds after clicking Wake up
         console.log('Finished waiting after Wake up.');
     } else {
@@ -83,7 +111,7 @@ const START_SERVER_BUTTON_SELECTOR = 'button:has-text("Start server")';
 
     // Add a final wait to allow the server to fully start before the script exits
     const finalServerStartWait = 3 * 60 * 1000; // 3 minutes
-    console.log(`Waiting ${finalServerStartWait / 1000} seconds for server to fully start...`);
+    console.log(`Clicked Start. Waiting ${finalServerStartWait / 1000} seconds for server to fully start...`);
     await page.waitForTimeout(finalServerStartWait);
     console.log('Finished waiting. Assuming server is started.');
 
@@ -94,6 +122,13 @@ const START_SERVER_BUTTON_SELECTOR = 'button:has-text("Start server")';
 
   } catch (error) {
     console.error('Playwright script failed:', error);
+    // Attempt to take a screenshot on any error for debugging
+    try {
+        await page.screenshot({ path: 'playwright_error.png' });
+        console.log('Screenshot saved as playwright_error.png');
+    } catch (screenshotError) {
+        console.error('Failed to take screenshot:', screenshotError);
+    }
     if (browser) {
       await browser.close();
     }
