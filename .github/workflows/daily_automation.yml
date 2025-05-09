@@ -2,15 +2,13 @@ name: Daily Minefort Keep-Alive and Backup
 
 on:
   schedule:
-    # Run every day at 03:00 UTC (adjust time as needed)
-    # Use a tool like crontab.guru to pick your desired UTC time
-    - cron: '0 3 * * *'
-  workflow_dispatch:
-    # Allows you to manually trigger the workflow from the Actions tab
+    - cron: '0 3 * * *' # Run every day at 03:00 UTC (adjust time as needed)
+  workflow_dispatch: # Allows manual trigger
 
 jobs:
   automate:
     runs-on: ubuntu-latest
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -22,43 +20,38 @@ jobs:
 
     - name: Install Node.js dependencies
       run: npm install
+      working-directory: .
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.x'
 
-    - name: Install Python dependencies
-      run: pip install ftplib # Switch to ftplib, remove pysftp from requirements.txt
-      # Update requirements.txt to only have `ftplib` if needed, or manage installation here
+    # Note: ftplib is a built-in Python library, no need to install from requirements.txt
+    # If you need other libs later, uncomment and add them to requirements.txt
+    # - name: Install Python dependencies
+    #   run: pip install -r requirements.txt
+    #   working-directory: .
 
-    - name: Run Mineflayer Bot to Start Server and Signal Readiness
+
+    - name: Run Mineflayer Bot to Start Server and Wait for Join
+      # This step will only succeed (exit 0) if the bot successfully joins the target server world
+      # If it fails (e.g., login failed, command failed, timeout), it will exit non-zero
       run: node src/start_bot.js
       env:
         MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
         MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
-        MINEFORT_SERVER_NAME: ${{ secrets.MINEFORT_SERVER_NAME }} # Should be 'ForAboniii' based on clarification
-        INDICATOR_FILE: server_ready_indicator.txt # Define the indicator file name
-      # Fail job if bot can't even run or log in initially
-      continue-on-error: false
+        MINEFORT_SERVER_NAME: ${{ secrets.MINEFORT_SERVER_NAME }} # Should be 'ForAboniii'
+      # If this step fails, the subsequent steps will be skipped (default behavior)
+      # continue-on-error: false # This is the default, making it explicit here
 
-    - name: Run Backup and Upload Script (Conditional)
-      # This step runs ONLY if the indicator file exists
-      if: success() && steps.run_bot.outputs.server_ready == 'true' # Need output from bot step
-      # Alternative condition check: if: success() && steps.run_bot.outcome == 'success' # If bot script exits successfully *only* after joining
-      # Better: Bot script writes a file, this step checks for file existence.
-      # Conditional check based on file existence needs a separate step or custom logic.
-      # Simplest: Bot script exits with code 0 on success, non-zero on failure *before* joining server world.
-      # The bot script exits 0 only AFTER joining the server world.
-      # The previous continue-on-error: false means this step only runs if bot step succeeds (exits 0).
-      # The bot script is modified to only exit 0 after joining the target server world.
-
+    - name: Run Backup and Upload Script
+      # This step will only run if the previous 'Run Mineflayer Bot' step succeeded
       run: python src/backup_and_upload.py
       env:
         FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
         FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
       permissions:
-        contents: write
+        contents: write # Grant write permissions for Git push
