@@ -45,13 +45,13 @@ jobs:
 
 
     - name: Run Playwright Server Starter
-      # This script logs into Minefort and clicks the start buttons
+      # This script logs into Minefort, navigates to the server dashboard, and clicks start buttons
       # It will exit successfully (0) if the process completes, or with error (1) if it fails
       run: node src/start_server_playwright.js
       env:
         MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
         MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
-        MINEFORT_SERVER_NAME: ${{ secrets.MINEFORT_SERVER_NAME }} # Should be 'ForAboniii'
+        MINEFORT_SERVER_ID: ${{ secrets.MINEFORT_SERVER_ID }} # Pass the new server ID secret
       # If this step fails, the subsequent backup step will be skipped (default behavior)
       # continue-on-error: false # This is the default, making it explicit here
 
