@@ -1,23 +1,24 @@
 const { chromium } = require('@playwright/test');
 
-// Get credentials and server name from environment variables (GitHub Secrets)
+// Get credentials and server ID from environment variables (GitHub Secrets)
 const MINEFORT_EMAIL = process.env.MINEFORT_EMAIL;
 const MINEFORT_PASSWORD = process.env.MINEFORT_PASSWORD;
-const MINEFORT_SERVER_NAME = process.env.MINEFORT_SERVER_NAME; // e.g., 'ForAboniii'
+const MINEFORT_SERVER_ID = process.env.MINEFORT_SERVER_ID; // e.g., 'PTHOzcWHNb'
 
 // --- Selectors based on the HTML you provided ---
 const LOGIN_URL = 'https://minefort.com/login';
 const EMAIL_INPUT_SELECTOR = 'input#email';
 const PASSWORD_INPUT_SELECTOR = 'input#password';
-const SIGN_IN_BUTTON_SELECTOR = 'button:has-text("Sign In")'; // Using text content as a selector
+const SIGN_IN_BUTTON_SELECTOR = 'button:has-text("Sign In")';
 
-const SERVERS_URL = 'https://minefort.com/servers';
-// Selector for the specific server card using the server name
-// This looks for a div that contains an h5 with the server name text
-const SERVER_CARD_SELECTOR = `div:has(h5:has-text("${MINEFORT_SERVER_NAME}"))`;
-// Selectors for buttons *within* the server card
-const WAKE_UP_BUTTON_SELECTOR = 'button:has-text("Wake up")';
+// Use the server ID to construct the direct URL
+const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${MINEFORT_SERVER_ID}`;
+
+// Selectors for buttons *on the individual server dashboard page*
+// Using text content for robustness, assuming the text is unique enough
+const WAKE_UP_BUTTON_SELECTOR = 'button:has-text("Wake up server")';
 const START_SERVER_BUTTON_SELECTOR = 'button:has-text("Start server")';
+
 // --- Cookie Dialog Selectors ---
 const COOKIE_DIALOG_SELECTOR = '#CybotCookiebotDialog'; // Selector for the main dialog
 const COOKIE_DENY_BUTTON_SELECTOR = '#CybotCookiebotDialogBodyButtonDecline'; // Selector for the "Deny" button
@@ -25,8 +26,8 @@ const COOKIE_DENY_BUTTON_SELECTOR = '#CybotCookiebotDialogBodyButtonDecline'; //
 
 
 (async () => {
-  if (!MINEFORT_EMAIL || !MINEFORT_PASSWORD || !MINEFORT_SERVER_NAME) {
-    console.error('Error: MINEFORT_EMAIL, MINEFORT_PASSWORD, and MINEFORT_SERVER_NAME environment variables must be set.');
+  if (!MINEFORT_EMAIL || !MINEFORT_PASSWORD || !MINEFORT_SERVER_ID) {
+    console.error('Error: MINEFORT_EMAIL, MINEFORT_PASSWORD, and MINEFORT_SERVER_ID environment variables must be set.');
     process.exit(1);
   }
 
@@ -38,10 +39,11 @@ const COOKIE_DENY_BUTTON_SELECTOR = '#CybotCookiebotDialogBodyButtonDecline'; //
     console.log(`Navigating to login page: ${LOGIN_URL}`);
     await page.goto(LOGIN_URL);
 
-    // --- ADDED: Handle Cookie Consent Dialog ---
+    // --- Handle Cookie Consent Dialog ---
     console.log('Checking for cookie consent dialog...');
     const cookieDialog = page.locator(COOKIE_DIALOG_SELECTOR);
-    if (await cookieDialog.isVisible({ timeout: 10000 })) { // Check visibility with a timeout
+    // Use a slightly longer timeout here in case the dialog takes a moment to appear
+    if (await cookieDialog.isVisible({ timeout: 15000 })) {
         console.log('Cookie consent dialog found. Attempting to dismiss...');
         const denyButton = page.locator(COOKIE_DENY_BUTTON_SELECTOR);
         if (await denyButton.isVisible()) {
@@ -56,7 +58,7 @@ const COOKIE_DENY_BUTTON_SELECTOR = '#CybotCookiebotDialogBodyButtonDecline'; //
     } else {
         console.log('Cookie consent dialog not found or did not appear.');
     }
-    // --- END ADDED: Handle Cookie Consent Dialog ---
+    // --- End Handle Cookie Consent Dialog ---
 
 
     console.log('Filling login form...');
@@ -64,42 +66,44 @@ const COOKIE_DENY_BUTTON_SELECTOR = '#CybotCookiebotDialogBodyButtonDecline'; //
     await page.fill(PASSWORD_INPUT_SELECTOR, MINEFORT_PASSWORD);
 
     console.log('Clicking Sign In button...');
-    // Now the click should not be intercepted by the cookie dialog
     await page.click(SIGN_IN_BUTTON_SELECTOR);
 
-    console.log(`Waiting for navigation to servers page: ${SERVERS_URL}`);
-    // Use waitUntil 'domcontentloaded' or 'networkidle' for robustness
-    await page.waitForURL(SERVERS_URL, { waitUntil: 'domcontentloaded' });
-    console.log('Successfully navigated to servers page.');
+    // Wait for successful login and potential redirect (usually back to /servers or dashboard)
+    // We don't need to wait for the specific /servers URL anymore
+    console.log('Waiting for successful login (expecting navigation)...');
+    // Wait until the URL is no longer the login page, with a reasonable timeout
+    await page.waitForURL(url => !url.startsWith(LOGIN_URL), { timeout: 30000 });
+    console.log(`Login successful. Current URL: ${page.url()}`);
 
-    console.log(`Looking for server card for "${MINEFORT_SERVER_NAME}"...`);
-    // Find the specific server card element
-    const serverCard = await page.locator(SERVER_CARD_SELECTOR).first();
 
-    if (await serverCard.count() === 0) {
-        console.error(`Error: Could not find server card for "${MINEFORT_SERVER_NAME}". Make sure the server name is correct ("${MINEFORT_SERVER_NAME}") and visible on the dashboard.`);
-        // Attempt to take a screenshot for debugging if the server card isn't found
-        await page.screenshot({ path: 'server_card_not_found_error.png' });
-        console.log('Screenshot saved as server_card_not_found_error.png');
-        process.exit(1);
-    }
-    console.log(`Found server card for "${MINEFORT_SERVER_NAME}".`);
+    // --- Navigate directly to the server dashboard using the ID ---
+    console.log(`Navigating directly to server dashboard: ${SERVER_DASHBOARD_URL}`);
+    await page.goto(SERVER_DASHBOARD_URL, { waitUntil: 'domcontentloaded' });
+    console.log('Navigated to server dashboard.');
+    // --- End Direct Navigation ---
 
-    // Check if the server is sleeping (Wake up button is visible)
-    const wakeUpButton = serverCard.locator(WAKE_UP_BUTTON_SELECTOR);
+
+    // Wait for the page content to load, specifically looking for one of the buttons
+    console.log('Waiting for server dashboard content to load...');
+    await page.waitForSelector(WAKE_UP_BUTTON_SELECTOR + ', ' + START_SERVER_BUTTON_SELECTOR, { timeout: 30000 });
+    console.log('Server dashboard buttons found.');
+
+
+    // Check if the server is sleeping (Wake up server button is visible)
+    const wakeUpButton = page.locator(WAKE_UP_BUTTON_SELECTOR);
     if (await wakeUpButton.isVisible({ timeout: 5000 })) { // Check visibility with a short timeout
-        console.log('Server is sleeping. Clicking "Wake up" button...');
+        console.log('Server is sleeping. Clicking "Wake up server" button...');
         await wakeUpButton.click();
-        console.log('Clicked "Wake up". Waiting 10 seconds for state change...');
+        console.log('Clicked "Wake up server". Waiting 10 seconds for state change...');
         await page.waitForTimeout(10000); // Wait 10 seconds after clicking Wake up
         console.log('Finished waiting after Wake up.');
     } else {
-        console.log('"Wake up" button not visible. Assuming server is not sleeping.');
+        console.log('"Wake up server" button not visible. Assuming server is not sleeping or in a different state.');
     }
 
 
-    // Now look for the "Start server" button (it appears after waking up or if already awake)
-    const startServerButton = serverCard.locator(START_SERVER_BUTTON_SELECTOR);
+    // Now look for the "Start server" button
+    const startServerButton = page.locator(START_SERVER_BUTTON_SELECTOR);
 
     console.log('Looking for "Start server" button...');
      // Wait for the start button to become visible, up to a certain timeout
@@ -110,10 +114,11 @@ const COOKIE_DENY_BUTTON_SELECTOR = '#CybotCookiebotDialogBodyButtonDecline'; //
     console.log('Clicked "Start server".');
 
     // Add a final wait to allow the server to fully start before the script exits
-    const finalServerStartWait = 3 * 60 * 1000; // 3 minutes
-    console.log(`Clicked Start. Waiting ${finalServerStartWait / 1000} seconds for server to fully start...`);
+    // Based on your input, 10 seconds after clicking Start should be enough for it to be 'ready'
+    const finalServerStartWait = 10 * 1000; // 10 seconds
+    console.log(`Clicked Start. Waiting ${finalServerStartWait / 1000} seconds for server to become ready...`);
     await page.waitForTimeout(finalServerStartWait);
-    console.log('Finished waiting. Assuming server is started.');
+    console.log('Finished waiting. Assuming server is ready for backup.');
 
 
     console.log('Playwright script finished successfully.');
