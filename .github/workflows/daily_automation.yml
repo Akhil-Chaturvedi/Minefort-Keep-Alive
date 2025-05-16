@@ -65,3 +65,10 @@ jobs:
         BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use the default GITHUB_TOKEN secret
       # permissions is set at the job level above
+
+     - name: Upload error screenshot if login fails
+      if: failure() && exists('playwright_error.png')
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-error
+        path: playwright_error.png
