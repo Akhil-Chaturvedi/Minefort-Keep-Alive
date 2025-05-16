@@ -45,18 +45,22 @@ const SELECTORS = {
     await page.waitForSelector(SELECTORS.email, { timeout: 30000 });
     await page.waitForSelector(SELECTORS.password);
 
-    console.log('Filling in email and password...');
+    console.log('Filling in credentials...');
     await page.fill(SELECTORS.email, MINEFORT_EMAIL);
     await page.fill(SELECTORS.password, MINEFORT_PASSWORD);
+    await page.waitForTimeout(300); // short delay just to stabilize form
+
+    const signInBtn = page.locator(SELECTORS.signIn);
+    await signInBtn.waitFor({ state: 'visible', timeout: 10000 });
 
     console.log('Clicking Sign In...');
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }),
-      page.click(SELECTORS.signIn)
+      signInBtn.click()
     ]);
 
     if (page.url().includes('/login')) {
-      throw new Error('Still on login page. Login may have failed.');
+      throw new Error('Login failed: Still on login page.');
     }
 
     console.log(`Login successful. URL: ${page.url()}`);
