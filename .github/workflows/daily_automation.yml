@@ -3,73 +3,60 @@ name: Daily Minefort Keep-Alive and Backup
 on:
   schedule:
     # Run every day at 03:00 UTC (adjust time as needed)
-    # Use a tool like crontab.guru to pick your desired UTC time
     - cron: '0 3 * * *'
   workflow_dispatch:
-    # Allows you to manually trigger the workflow from the Actions tab
 
 jobs:
   automate:
-    runs-on: ubuntu-latest # Use a standard Ubuntu runner provided by GitHub
+    runs-on: ubuntu-latest
 
     permissions:
-      contents: write # Grant write permissions to the GITHUB_TOKEN for cloning/pushing
+      contents: write
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20' # Use a recent stable Node.js version
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-    - name: Install Node.js dependencies (including Playwright)
-      run: npm install
-      working-directory: . # Assumes package.json is at the repo root
+      - name: Install Node.js dependencies (including Playwright)
+        run: npm install
+        working-directory: .
 
-    - name: Install Playwright Browsers
-      # This command downloads the necessary browser binaries (Chromium, Firefox, WebKit)
-      run: npx playwright install --with-deps
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    # Note: ftplib is a built-in Python library, no need to install from requirements.txt
-    # If you need other libs later, uncomment and add them to requirements.txt
-    # - name: Install Python dependencies
-    #   run: pip install -r requirements.txt
-    #   working-directory: .
+      # - name: Install Python dependencies
+      #   run: pip install -r requirements.txt
+      #   working-directory: .
 
+      - name: Run Playwright Server Starter
+        run: node src/start_server_playwright.js
+        env:
+          MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
+          MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
+          MINEFORT_SERVER_ID: ${{ secrets.MINEFORT_SERVER_ID }}
 
-    - name: Run Playwright Server Starter
-      # This script logs into Minefort, navigates to the server dashboard, and clicks start buttons
-      # It will exit successfully (0) if the process completes, or with error (1) if it fails
-      run: node src/start_server_playwright.js
-      env:
-        MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
-        MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
-        FTP_USERNAME: ${{ secrets.FTP_USERNAME }} # Pass the new server ID secret
-      # If this step fails, the subsequent backup step will be skipped (default behavior)
-      # continue-on-error: false # This is the default, making it explicit here
+      - name: Upload error screenshot if login fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-error
+          path: playwright_error.png
+          if-no-files-found: ignore
 
-
-    - name: Run Backup and Upload Script
-      # This step will only run if the previous 'Run Playwright Server Starter' step succeeded
-      run: python src/backup_and_upload.py
-      env:
-        FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-        FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use the default GITHUB_TOKEN secret
-      # permissions is set at the job level above
-
-- name: Upload error screenshot if login fails
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: playwright-error
-        path: playwright_error.png
-        if-no-files-found: ignore
+      - name: Run Backup and Upload Script
+        run: python src/backup_and_upload.py
+        env:
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
