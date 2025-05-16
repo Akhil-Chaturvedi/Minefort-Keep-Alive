@@ -43,7 +43,7 @@ jobs:
         env:
           MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
           MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
-          MINEFORT_SERVER_ID: ${{ secrets.MINEFORT_SERVER_ID }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
 
       - name: Upload error screenshot if login fails
         if: failure()
