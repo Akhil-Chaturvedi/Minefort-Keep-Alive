@@ -41,26 +41,28 @@ const SELECTORS = {
       }
     }
 
-    console.log('Waiting for login form...');
-    await page.waitForSelector(SELECTORS.email, { timeout: 30000 });
-    await page.waitForSelector(SELECTORS.password);
+    // Wait for the login form container to be visible
+    console.log('Waiting for login form container...');
+    await page.waitForSelector('form', { timeout: 30000 });
 
-    console.log('Filling in credentials...');
+    // Wait for email and password input to be attached to the DOM
+    console.log('Waiting specifically for email and password inputs to be attached...');
+    await page.waitForSelector(SELECTORS.email, { state: 'attached', timeout: 30000 });
+    await page.waitForSelector(SELECTORS.password, { state: 'attached' });
+
+    console.log('Filling in email and password...');
     await page.fill(SELECTORS.email, MINEFORT_EMAIL);
     await page.fill(SELECTORS.password, MINEFORT_PASSWORD);
-    await page.waitForTimeout(300); // short delay just to stabilize form
-
-    const signInBtn = page.locator(SELECTORS.signIn);
-    await signInBtn.waitFor({ state: 'visible', timeout: 10000 });
 
     console.log('Clicking Sign In...');
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }),
-      signInBtn.click()
+      page.click(SELECTORS.signIn)
     ]);
 
+    // Check if login failed (still on login page)
     if (page.url().includes('/login')) {
-      throw new Error('Login failed: Still on login page.');
+      throw new Error('Still on login page. Login may have failed.');
     }
 
     console.log(`Login successful. URL: ${page.url()}`);
