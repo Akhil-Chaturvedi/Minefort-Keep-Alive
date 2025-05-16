@@ -3,13 +3,13 @@ const { chromium } = require('@playwright/test');
 // Get credentials and server ID (using FTP_USERNAME as ID) from environment variables (GitHub Secrets)
 const MINEFORT_EMAIL = process.env.MINEFORT_EMAIL;
 const MINEFORT_PASSWORD = process.env.MINEFORT_PASSWORD;
-const MINEFORT_SERVER_ID = process.env.FTP_USERNAME; // Using FTP_USERNAME as the server ID
+const FTP_USERNAME = process.env.FTP_USERNAME; // Using FTP_USERNAME as the server ID
 
 // --- Selectors based on the HTML you provided ---
 const LOGIN_URL = 'https://minefort.com/login';
 
 // Use the server ID to construct the direct URL
-const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${MINEFORT_SERVER_ID}`;
+const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${FTP_USERNAME}`;
 
 const SELECTORS = {
   cookieDialog: '#CybotCookiebotDialog',
@@ -26,7 +26,7 @@ const SELECTORS = {
 
 
 (async () => {
-  if (!MINEFORT_EMAIL || !MINEFORT_PASSWORD || !MINEFORT_SERVER_ID) {
+  if (!MINEFORT_EMAIL || !MINEFORT_PASSWORD || !FTP_USERNAME) {
     console.error('Missing required environment variables. Make sure MINEFORT_EMAIL, MINEFORT_PASSWORD, and FTP_USERNAME secrets are set.');
     process.exit(1);
   }
@@ -71,14 +71,15 @@ const SELECTORS = {
 
     // --- ADDED: Small wait before clicking Sign In ---
     console.log('Waiting briefly before clicking Sign In...');
-    await page.waitForTimeout(1000); // Wait 1 second
+    await page.waitForTimeout(2000); // Wait 2 seconds - increased slightly
     // --- END ADDED ---
 
     console.log('Clicking Sign In...');
     // Wait for navigation away from the login page
     await Promise.all([
-      // CORRECTED: Wait for the URL string to NOT include the login URL
-      page.waitForURL(url => !url.toString().includes(LOGIN_URL), { timeout: 30000 }),
+      // CORRECTED: Wait for ANY URL change, not specifically away from /login
+      // This handles cases where it might redirect to an error page or similar
+      page.waitForURL(url => url.toString() !== LOGIN_URL, { timeout: 30000 }),
       page.click(SELECTORS.signIn)
     ]);
 
