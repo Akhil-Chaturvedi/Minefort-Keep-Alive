@@ -3,13 +3,13 @@ const { chromium } = require('@playwright/test');
 // Get credentials and server ID from environment variables (GitHub Secrets)
 const MINEFORT_EMAIL = process.env.MINEFORT_EMAIL;
 const MINEFORT_PASSWORD = process.env.MINEFORT_PASSWORD;
-const MINEFORT_SERVER_ID = process.env.FTP_USERNAME;
+const FTP_USERNAME = process.env.FTP_USERNAME;
 
 const LOGIN_URL = 'https://minefort.com/login';
 const EMAIL_INPUT_SELECTOR = 'input#email';
 const PASSWORD_INPUT_SELECTOR = 'input#password';
 const SIGN_IN_BUTTON_SELECTOR = 'button:has-text("Sign In")';
-const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${MINEFORT_SERVER_ID}`;
+const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${FTP_USERNAME}`;
 const WAKE_UP_BUTTON_SELECTOR = 'button:has-text("Wake up server")';
 const START_SERVER_BUTTON_SELECTOR = 'button:has-text("Start server")';
 
@@ -17,7 +17,7 @@ const COOKIE_DIALOG_SELECTOR = '#CybotCookiebotDialog';
 const COOKIE_DENY_BUTTON_SELECTOR = '#CybotCookiebotDialogBodyButtonDecline';
 
 (async () => {
-  if (!MINEFORT_EMAIL || !MINEFORT_PASSWORD || !MINEFORT_SERVER_ID) {
+  if (!MINEFORT_EMAIL || !MINEFORT_PASSWORD || !FTP_USERNAME) {
     console.error('Missing required environment variables.');
     process.exit(1);
   }
