@@ -14,7 +14,6 @@ const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${MINEFORT_SERVER_ID}
 const SELECTORS = {
   cookieDialog: '#CybotCookiebotDialog',
   cookieDeny: '#CybotCookiebotDialogBodyButtonDecline',
-  // CORRECTED: Use the ID selector for email input
   email: 'input#email', // Or '#email'
   password: 'input#password', // This one was already correct based on previous HTML
   signIn: 'button:has-text("Sign In")',
@@ -63,27 +62,25 @@ const SELECTORS = {
 
     // Wait for email and password input to be attached to the DOM
     console.log('Waiting specifically for email and password inputs...');
-    // CORRECTED: Use the ID selector for email
     await page.waitForSelector(SELECTORS.email, { state: 'attached', timeout: 30000 });
-    await page.waitForSelector(SELECTORS.password, { state: 'attached', timeout: 30000 }); // Added timeout here too
+    await page.waitForSelector(SELECTORS.password, { state: 'attached', timeout: 30000 });
 
     console.log('Filling in email and password...');
     await page.fill(SELECTORS.email, MINEFORT_EMAIL);
     await page.fill(SELECTORS.password, MINEFORT_PASSWORD);
 
+    // --- ADDED: Small wait before clicking Sign In ---
+    console.log('Waiting briefly before clicking Sign In...');
+    await page.waitForTimeout(1000); // Wait 1 second
+    // --- END ADDED ---
+
     console.log('Clicking Sign In...');
+    // Wait for navigation away from the login page
     await Promise.all([
-      // Wait for navigation away from the login page
-      page.waitForURL(url => url.pathname !== '/login', { timeout: 30000 }),
+      // CORRECTED: Wait for the URL string to NOT include the login URL
+      page.waitForURL(url => !url.toString().includes(LOGIN_URL), { timeout: 30000 }),
       page.click(SELECTORS.signIn)
     ]);
-
-    // Check if login failed (still on login page) - redundant with waitForURL but good check
-    if (page.url().includes('/login')) {
-       // This part should ideally not be reached if waitForURL succeeds, but good for safety
-       console.error('Login failed: Still on login page after clicking Sign In.');
-       throw new Error('Login failed: Still on login page.');
-    }
 
     console.log(`Login successful. Current URL: ${page.url()}`);
 
