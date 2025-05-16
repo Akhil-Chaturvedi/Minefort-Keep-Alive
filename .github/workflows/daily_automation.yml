@@ -51,7 +51,7 @@ jobs:
       env:
         MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
         MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
-        MINEFORT_SERVER_ID: ${{ secrets.MINEFORT_SERVER_ID }} # Pass the new server ID secret
+        FTP_USERNAME: ${{ secrets.FTP_USERNAME }} # Pass the new server ID secret
       # If this step fails, the subsequent backup step will be skipped (default behavior)
       # continue-on-error: false # This is the default, making it explicit here
 
