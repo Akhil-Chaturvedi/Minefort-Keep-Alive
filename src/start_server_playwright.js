@@ -5,10 +5,8 @@ const MINEFORT_EMAIL = process.env.MINEFORT_EMAIL;
 const MINEFORT_PASSWORD = process.env.MINEFORT_PASSWORD;
 const FTP_USERNAME = process.env.FTP_USERNAME; // Using FTP_USERNAME as the server ID
 
-// --- Selectors based on the HTML you provided ---
+// --- Selectors ---
 const LOGIN_URL = 'https://minefort.com/login';
-
-// Use the server ID to construct the direct URL
 const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${FTP_USERNAME}`;
 
 const SELECTORS = {
@@ -21,9 +19,7 @@ const SELECTORS = {
   startServer: 'button:has-text("Start server")'
 };
 
-// Add a selector for common login error messages (this might need adjustment based on Minefort's actual error display)
 const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .login-error-message';
-
 
 (async () => {
   if (!MINEFORT_EMAIL || !MINEFORT_PASSWORD || !FTP_USERNAME) {
@@ -37,24 +33,52 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
 
   try {
     console.log(`Navigating to login: ${LOGIN_URL}`);
-    await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 45000 }); // Slightly increased timeout for page load
 
-    console.log('Checking for cookie consent dialog...');
-    const cookieDialog = page.locator(SELECTORS.cookieDialog);
-    if (await cookieDialog.isVisible({ timeout: 15000 }).catch(() => false)) {
-      console.log('Cookie consent dialog found.');
-      const denyButton = page.locator(SELECTORS.cookieDeny);
-      if (await denyButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+    // --- More Robust Cookie Handling ---
+    console.log('Attempting to handle cookie consent dialog if present...');
+    const cookieDialogElement = page.locator(SELECTORS.cookieDialog);
+    const cookieDenyButton = page.locator(SELECTORS.cookieDeny);
+
+    try {
+        // Wait for the dialog to become visible.
+        // If it doesn't appear within this time, we assume it's not there or already handled.
+        await cookieDialogElement.waitFor({ state: 'visible', timeout: 20000 }); // Wait up to 20s for dialog
+        console.log('Cookie consent dialog is visible.');
+
+        // If dialog is visible, ensure "Deny" button is also visible and then click it.
+        console.log('Waiting for "Deny" button to be actionable...');
+        await cookieDenyButton.waitFor({ state: 'visible', timeout: 5000 }); // Wait for deny button
         console.log('Clicking "Deny" on cookie dialog...');
-        await denyButton.click();
-        console.log('Cookie dialog dismissed.');
-        await cookieDialog.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
-      } else {
-        console.warn('Cookie dialog visible, but "Deny" button not found. Proceeding anyway.');
-      }
-    } else {
-      console.log('Cookie consent dialog not found or did not appear.');
+        await cookieDenyButton.click({ timeout: 5000 }); // Click deny button
+
+        // IMPORTANT: Wait for the dialog to actually disappear.
+        console.log('Waiting for cookie dialog to become hidden...');
+        await cookieDialogElement.waitFor({ state: 'hidden', timeout: 10000 }); // Wait up to 10s for it to hide
+        console.log('Cookie consent dialog is now hidden.');
+
+    } catch (error) {
+        // This block catches errors from the try block above (e.g., timeouts)
+        if (error.message.includes('Timeout') && error.message.includes(SELECTORS.cookieDialog) && error.message.includes("state: 'visible'")) {
+            // This is okay: dialog didn't appear, so we assume it's not an issue.
+            console.log('Cookie consent dialog did not become visible within the timeout. Assuming it is not present.');
+        } else if (error.message.includes('Timeout') && error.message.includes(SELECTORS.cookieDialog) && error.message.includes("state: 'hidden'")) {
+            // This is a warning: we clicked Deny, but the dialog didn't disappear.
+            console.warn('Clicked "Deny" on cookie dialog, but it did not disappear within the timeout. It might interfere with subsequent actions.');
+            console.log('Attempting to press Escape key as a fallback...');
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(1000); // Give it a moment
+            if (await cookieDialogElement.isHidden({timeout: 2000})) {
+                console.log('Dialog hidden after pressing Escape.');
+            } else {
+                console.warn('Escape key did not hide the cookie dialog. It may still be present and cause issues.');
+            }
+        } else {
+            // Other errors during cookie handling (e.g., Deny button not found when dialog was expected)
+            console.warn(`A warning or error occurred during cookie dialog handling: ${error.name} - ${error.message}. Attempting to proceed.`);
+        }
     }
+    // --- End of Cookie Handling ---
 
     console.log('Waiting specifically for email and password inputs...');
     await page.waitForSelector(SELECTORS.email, { state: 'attached', timeout: 30000 });
@@ -65,37 +89,29 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     await page.fill(SELECTORS.password, MINEFORT_PASSWORD);
 
     console.log('Waiting briefly before clicking Sign In...');
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(2000); // Small pause
 
+    // Now, attempt to click Sign In (the cookie dialog should be gone)
     console.log('Clicking Sign In button...');
-    await page.click(SELECTORS.signIn);
+    await page.click(SELECTORS.signIn, {timeout: 30000 }); // Click with a timeout, ensuring it is actionable
 
     console.log('Waiting for navigation to occur after clicking Sign In...');
     try {
-        // Wait for the navigation to complete. This could be a redirect to the dashboard,
-        // or a reload of the login page (e.g., with an error message).
         await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
         console.log(`Navigation completed. Current URL is: ${page.url()}`);
     } catch (navError) {
-        // This catch block handles cases where waitForNavigation itself times out.
-        // This usually means the page didn't even try to navigate (e.g., server didn't respond).
         console.error(`Timeout or error during page.waitForNavigation after sign-in. Current URL: ${page.url()}`);
         if (page.url().startsWith(LOGIN_URL)) {
-            // Likely stuck on login page. Check for error messages.
             const loginErrorElement = page.locator(LOGIN_ERROR_SELECTOR).first();
             let loginErrorText = "No specific error message found on page.";
             if (await loginErrorElement.isVisible({timeout: 2000}).catch(() => false)) {
                 loginErrorText = await loginErrorElement.textContent() || "Error message element found but was empty.";
             }
-            throw new Error(`Login failed: Still on login page after navigation timeout (${30000 / 1000}s). Page might have shown an error: "${loginErrorText}". Original navigation error: ${navError.message}`);
+            throw new Error(`Login failed: Still on login page after navigation timeout. Page might have shown an error: "${loginErrorText}". Original navigation error: ${navError.message}`);
         }
-        // If not on login URL, but navigation still failed, rethrow with context.
         throw new Error(`Login failed: Navigation error after sign-in. Current URL: ${page.url()}. Original error: ${navError.message}`);
     }
 
-    // After waitForNavigation completes (or if it was very fast and didn't throw/error out):
-    // Check if we are still on the login page. This indicates a login failure
-    // where the page might have reloaded or updated with an error.
     if (page.url().startsWith(LOGIN_URL)) {
         const loginErrorElement = page.locator(LOGIN_ERROR_SELECTOR).first();
         let loginErrorText = "No specific error message found on page after navigation.";
@@ -144,8 +160,9 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     process.exit(0);
 
   } catch (err) {
-    console.error('Error during automation:', err); // Log the full error object
-    if (page && !page.isClosed()) { // Ensure page object is valid before taking screenshot
+    console.error('Error during automation:', err.message); // Log just the message for cleaner GitHub Action logs
+    console.error('Full error object:', err); // Log the full error for detailed debugging if needed
+    if (page && !page.isClosed()) {
         try {
             const screenshotPath = 'playwright_error.png';
             await page.screenshot({ path: screenshotPath });
