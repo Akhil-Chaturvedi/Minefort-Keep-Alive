@@ -1,26 +1,28 @@
 import os
 import sys
-import ftplib # Use ftplib for standard FTP
 import io
 import zipfile
 import datetime
 import subprocess
 import shutil
-import time # Import time for potential delays
-import glob # Import glob for finding old backups
+import time
+import glob
+import asyncio
+import aioftp # parfive[ftp] requires aioftp
+import parfive # The parallel downloader
 
 # --- Configuration from Environment Variables ---
 # FTP Details
-FTP_HOST = 'ftp.minefort.com'
-FTP_PORT = 21 # Default FTP port
+FTP_HOST = os.environ.get('FTP_HOST', 'ftp.minefort.com') # Use env var or default
+FTP_PORT = int(os.environ.get('FTP_PORT', 21)) # Use env var or default, ensure int
 FTP_USERNAME = os.environ.get('FTP_USERNAME')
 FTP_PASSWORD = os.environ.get('FTP_PASSWORD')
-REMOTE_FTP_ROOT = '/' # The directory on the FTP server to backup (usually '/')
+REMOTE_FTP_ROOT = os.environ.get('REMOTE_FTP_ROOT', '/') # Use env var or default
 
 # GitHub Details
 BACKUP_REPO_URL = os.environ.get('BACKUP_REPO_URL') # e.g., https://github.com/yourusername/your-backup-repo.git
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
-BACKUP_FOLDER_IN_REPO = 'backups' # Folder inside your GitHub repo to store zips
+BACKUP_FOLDER_IN_REPO = os.environ.get('BACKUP_FOLDER_IN_REPO', 'backups') # Use env var or default
 
 # --- Items to Backup ---
 # Define the specific folders and files to include from the REMOTE_FTP_ROOT
@@ -44,171 +46,123 @@ DATE_STR = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 BACKUP_ZIP_FILENAME = f"server_backup_{DATE_STR}.zip"
 TEMP_REPO_DIR = 'temp_backup_repo' # Temporary directory to clone the backup repo into
 TEMP_ZIP_FILE_PATH = f"/tmp/{BACKUP_ZIP_FILENAME}" # Temporary location to save the zip before git
+TEMP_LOCAL_DOWNLOAD_DIR = 'temp_local_ftp_backup' # Temporary local directory for parallel download
 
-# --- FTP Download and Zip (using ftplib) ---
-def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_path="", items_filter=None):
+
+# --- FTP File Discovery (using aioftp) ---
+async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
     """
-    Recursively downloads files and directories from FTP to a zip file object.
-    items_filter: A list of item names to include at the current level, or None to include all.
+    Recursively collects remote file and directory paths from FTP.
+    Returns a list of tuples: (remote_path, item_type) where item_type is 'file' or 'dir'.
+    items_filter: A list of item names to include at the current level (only applied at REMOTE_FTP_ROOT).
     """
-    print(f"Processing remote directory: {remote_dir}")
+    print(f"Collecting items in remote directory: {remote_dir}")
+    remote_items = []
 
-    # Ensure we are in the correct remote directory on the FTP server
-    original_cwd_before_entry = None # Store CWD before attempting to change into remote_dir
     try:
-        original_cwd_before_entry = ftp_client.pwd() # Get current CWD
-        ftp_client.cwd(remote_dir)
-        print(f"Successfully changed to directory: {ftp_client.pwd()}") # Verify CWD
-    except ftplib.error_perm as e:
-         print(f"Permission error accessing directory {remote_dir}: {e}")
-         return # Cannot process this directory, return from recursion
-    except Exception as e:
-         print(f"Error changing to directory {remote_dir}: {e}")
-         return # Cannot process this directory, return from recursion
-
-
-    items = []
-    try:
-        items = ftp_client.nlst() # Get list of files and directories in current remote_dir
-        print(f"Items found in {remote_dir}: {items}")
-    except ftplib.error_perm as e:
-        print(f"Permission error listing contents of directory {remote_dir}: {e}")
-        # Log error and return. Ensure we change back up if we successfully changed into remote_dir.
-        try:
-            if original_cwd_before_entry is not None and ftp_client.pwd() != original_cwd_before_entry:
-                 ftp_client.cwd(original_cwd_before_entry)
-                 print(f"Changed back to parent directory after list permission error.")
-        except:
-            pass
-        return
+        # aioftp's list method returns a list of tuples (name, attributes)
+        items_info = await ftp_client.list(remote_dir)
+        print(f"Items found in {remote_dir}: {[item_info[0] for item_info in items_info]}")
     except Exception as e:
         print(f"Error listing contents of directory {remote_dir}: {e}")
-        try:
-             if original_cwd_before_entry is not None and ftp_client.pwd() != original_cwd_before_entry:
-                 ftp_client.cwd(original_cwd_before_entry)
-                 print(f"Changed back to parent directory after list error.")
-        except:
-            pass
-        return
+        # Log error and return what we have
+        return remote_items
 
+    for item_info in items_info:
+        item_name = item_info[0]
+        item_attributes = item_info[1]
 
-    current_ftp_cwd = ftp_client.pwd() # Get the current CWD on the server after successfully changing into remote_dir
-
-    for item in items:
-        # Skip special directories if any (like . or ..)
-        if item in ('.', '..'):
+        # Skip special directories
+        if item_name in ('.', '..'):
             continue
 
         # --- Filtering Logic ---
-        # If a filter is provided for this level, skip items not in the filter
-        if items_filter is not None and item not in items_filter:
-            print(f"Skipping item (not in filter): {item}")
+        # Apply filter only at the root directory level
+        if items_filter is not None and remote_dir == REMOTE_FTP_ROOT and item_name not in items_filter:
+            print(f"Skipping item (not in root filter): {item_name}")
             continue
         # --- End Filtering Logic ---
 
-
-        # Construct the full remote path for the item
-        # This is the path from the FTP root
-        # Use os.path.join for robustness and replace backslashes for FTP
-        full_remote_item_path = os.path.join(current_ftp_cwd, item).replace('\\', '/')
-        # Ensure no double slashes unless it's the root
+        full_remote_item_path = os.path.join(remote_dir, item_name).replace('\\', '/')
+        # Clean up potential double slashes (except for root '/')
         if full_remote_item_path != '/' and full_remote_item_path.startswith('//'):
              full_remote_item_path = full_remote_item_path[1:]
 
-        # Path within the zip file relative to the initial REMOTE_FTP_ROOT
-        # Ensure base_zip_path handles the initial '/' correctly
-        zip_path_in_zip = os.path.join(base_zip_path, item).replace('\\', '/')
-        # Remove leading slash from zip_path_in_zip if it corresponds to the root
-        if zip_path_in_zip.startswith('/') and base_zip_path == "":
-             zip_path_in_zip = zip_path_in_zip[1:]
-        if zip_path_in_zip.startswith('./'): # Clean up relative path start
-             zip_path_in_zip = zip_path_in_zip[2:]
-        # Special case for the root directory itself
-        if zip_path_in_zip == '.' and remote_dir == REMOTE_FTP_ROOT:
-             zip_path_in_zip = "" # Handle root directory entry
+        item_type = None
+        if 'type' in item_attributes:
+            if item_attributes['type'] == 'dir':
+                item_type = 'dir'
+                print(f"Identified as directory: {item_name}")
+            elif item_attributes['type'] == 'file':
+                item_type = 'file'
+                print(f"Identified as file: {item_name}")
+            # Ignore other types like links for backup purposes
 
-
-        print(f"Considering item for backup: {item} (Remote: {full_remote_item_path}, Zip: {zip_path_in_zip})")
-
-        is_directory = False
-        original_cwd_before_check = ftp_client.pwd() # Store CWD before attempting to change into item
-        try:
-            # Try to change directory - if it works, it's a directory
-            # Attempt cwd from the *current* CWD on the FTP server
-            ftp_client.cwd(item)
-            is_directory = True
-            print(f"Identified as directory: {item}")
-            # Change back immediately after confirming it's a directory
-            ftp_client.cwd(original_cwd_before_check)
-            print(f"Changed back to directory: {ftp_client.pwd()}")
-
-        except ftplib.error_perm:
-            # If cwd fails with permission error, it's likely a file
-            is_directory = False
-            print(f"Identified as file: {item}")
-        except Exception as e:
-            # Other errors during cwd attempt
-            print(f"Error while trying to determine if {item} is directory: {e}. Skipping item.")
-            continue # Skip this item
-
-
-        if is_directory:
-            # Add directory entry to zip (important for empty dirs)
-            # Ensure directory path in zip ends with a slash unless it's the root entry
-            dir_zip_path = zip_path_in_zip
-            # Only add trailing slash if it's not empty (the root) and not already has one
-            if dir_zip_path and not dir_zip_path.endswith('/'):
-                dir_zip_path += '/'
-            # Skip adding the root directory entry itself if base_zip_path was empty
-            if dir_zip_path:
-                print(f"Adding directory entry to zip: {dir_zip_path}")
-                try:
-                    # Add an empty string to signify a directory entry
-                    zip_file.writestr(dir_zip_path, "")
-                except Exception as e:
-                     print(f"Warning: Error adding directory {dir_zip_path} entry to zip: {e}")
+        if item_type == 'dir':
+            # Add the directory path itself (ending with /) to the list
+            # This is important for creating empty directories in the zip later
+            dir_path_for_list = full_remote_item_path
+            if dir_path_for_list != '/' and not dir_path_for_list.endswith('/'):
+                 dir_path_for_list += '/'
+             # Don't add the root directory as a separate item if it's just '/'
+            if dir_path_for_list != '/':
+                 remote_items.append((dir_path_for_list, 'dir'))
 
             # Recurse into this directory
-            # The recursive call will handle changing into the subdirectory
-            # Pass None for items_filter to include all contents within this directory
-            # The base_zip_path for the recursive call is the zip_path_in_zip of the current directory
-            ftp_recursive_download_and_zip(ftp_client, full_remote_item_path, zip_file, zip_path_in_zip, items_filter=None)
+            # Pass None for items_filter for recursive calls within selected directories
+            subdir_items = await collect_remote_items(ftp_client, full_remote_item_path, items_filter=None)
+            remote_items.extend(subdir_items)
 
-            # After the recursive call returns, the FTP client's CWD should be the parent directory
-            # of the directory we just processed (because the recursive call changes back up).
-            # We are already in the correct directory (remote_dir) to continue the loop.
+        elif item_type == 'file':
+            # Add the file path to the list
+            remote_items.append((full_remote_item_path, 'file'))
 
+    return remote_items
 
-        else: # It's a file
-            # We are currently in remote_dir on the FTP server, so we can directly RETR the item name
-            print(f"Downloading file and adding to zip: {zip_path_in_zip if zip_path_in_zip else item}")
-            try:
-                with io.BytesIO() as file_buffer:
-                     # ftplib's retrbinary takes a command and a callback
-                     # We are already in the correct directory (remote_dir) to RETR item
-                     ftp_client.retrbinary(f'RETR {item}', file_buffer.write)
-                     file_buffer.seek(0)
-                     # Add file from buffer to zip
-                     zip_file.writestr(zip_path_in_zip, file_buffer.read())
-                print(f"Successfully added {zip_path_in_zip if zip_path_in_zip else item} to zip.")
+# --- Local Zipping ---
+def zip_local_directory(local_dir, zip_filepath):
+    """Creates a zip file from contents of a local directory."""
+    print(f"Creating zip file {zip_filepath} from local directory {local_dir}")
+    try:
+        with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zipf:
+            # Walk through the local directory
+            for root, dirs, files in os.walk(local_dir):
+                # Create base path in zip relative to the local_dir
+                # os.path.relpath gives path relative to start, replace \\ for zip
+                relative_base_path_in_zip = os.path.relpath(root, local_dir).replace('\\', '/')
 
-            except ftplib.error_perm as e:
-                 print(f"Permission error downloading file {full_remote_item_path}: {e}")
-            except Exception as e:
-                print(f"Error downloading/zipping file {full_remote_item_path}: {e}")
-                # Log the error but continue with other items
+                # Handle the root of the local_dir correctly in zip paths
+                if relative_base_path_in_zip == '.':
+                     relative_base_path_in_zip = ''
 
-    # After processing all items in the current directory, change back up one level
-    # unless this is the initial call processing the root directory
-    if remote_dir != REMOTE_FTP_ROOT:
-        try:
-             ftp_client.cwd('..')
-             print(f"Finished processing {remote_dir}, changed back to parent: {ftp_client.pwd()}")
-        except Exception as e:
-             print(f"Warning: Could not change back up from {remote_dir}: {e}")
+                # Add directories to the zip (important for empty ones)
+                for dir in dirs:
+                    zip_dir_path = os.path.join(relative_base_path_in_zip, dir).replace('\\', '/') + '/'
+                    print(f"Adding local directory entry to zip: {zip_dir_path}")
+                    try:
+                        zipf.writestr(zip_dir_path, "")
+                    except Exception as e:
+                         print(f"Warning: Error adding local directory {zip_dir_path} entry to zip: {e}")
 
 
-# --- GitHub Interaction (No changes needed here, but including for completeness) ---
+                # Add files to the zip
+                for file in files:
+                    full_local_file_path = os.path.join(root, file)
+                    # Create the path for the file within the zip
+                    zip_file_path = os.path.join(relative_base_path_in_zip, file).replace('\\', '/')
+                    print(f"Adding local file to zip: {zip_file_path}")
+                    try:
+                        # Use zipf.write() which handles opening and reading the local file
+                        zipf.write(full_local_file_path, zip_file_path)
+                    except Exception as e:
+                         print(f"Warning: Error adding local file {zip_file_path} to zip: {e}")
+
+        print("Local zipping complete.")
+    except Exception as e:
+        print(f"Error creating zip from local directory {local_dir}: {e}")
+        raise # Re-raise the exception
+
+# --- GitHub Interaction (Mostly the same) ---
 def setup_git_credentials():
     """Sets up Git credentials for the runner."""
     print("Setting up Git credentials...")
@@ -260,7 +214,6 @@ def add_and_commit_backup(repo_dir, backup_filepath):
                         print(f"Found old backup, attempting to remove: {old_file_path}")
                         try:
                             # Use git rm to remove the file and stage the deletion
-                            # Add --cached if you only want to remove from index, not working tree
                             subprocess.run(['git', 'rm', '-f', old_file_path], check=True)
                             print(f"Staged removal of {old_file_path}")
                         except subprocess.CalledProcessError as e:
@@ -338,42 +291,183 @@ def add_and_commit_backup(repo_dir, backup_filepath):
         os.chdir(original_dir)
 
 
+# --- Asynchronous FTP Process (using aioftp and parfive) ---
+async def async_ftp_process():
+    """Asynchronous function to handle FTP connection, file collection, and parallel download."""
+    print(f"Connecting to FTP (aioftp): {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
+    client = None
+    remote_items_to_process = []
+    try:
+        # Connect to FTP using aioftp
+        client = aioftp.Client(timeout=180) # Set client-level timeout
+        await client.connect(FTP_HOST, FTP_PORT)
+        await client.login(FTP_USERNAME, FTP_PASSWORD)
+        print("FTP connection successful (aioftp).")
+
+        # Collect list of files and directories to process
+        # Pass ITEMS_TO_BACKUP as the filter for the root directory
+        remote_items_to_process = await collect_remote_items(client, REMOTE_FTP_ROOT, items_filter=ITEMS_TO_BACKUP)
+
+        # Close connection after collecting paths
+        # It's generally better to close connections you are done with,
+        # parfive will open its own connections for downloading.
+        await client.close()
+        print("Closed aioftp client connection after collecting items.")
+
+
+        # Filter out directory markers, only keep file paths for downloading
+        remote_file_paths = [item[0] for item in remote_items_to_process if item[1] == 'file']
+        # Get directory paths for creating local directories and zip entries
+        remote_dir_paths = [item[0] for item in remote_items_to_process if item[1] == 'dir']
+
+
+        if not remote_file_paths and not remote_dir_paths:
+            print("No files or directories found to backup based on filter. Exiting FTP process.")
+            return False # Indicate no backup needed
+
+        # Clean up existing temp local download dir
+        if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
+            print(f"Removing existing temporary local download directory: {TEMP_LOCAL_DOWNLOAD_DIR}")
+            shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
+        os.makedirs(TEMP_LOCAL_DOWNLOAD_DIR, exist_ok=True)
+        print(f"Created temporary local download directory: {TEMP_LOCAL_DOWNLOAD_DIR}")
+
+
+        if remote_file_paths:
+             print(f"Found {len(remote_file_paths)} files to download. Starting parallel download using parfive...")
+             # Configure parfive downloader
+             # max_connections: Number of parallel connections (adjust based on runner/server limits)
+             # file_progress: Show progress bars for individual files
+             # initial_transfer_size: Initial chunk size for downloads
+             dl = parfive.Downloader(max_connections=5, file_progress=True, initial_transfer_size=1024*1024) # 1MB initial chunk
+
+
+             # Enqueue files for parallel download
+             for remote_path in remote_file_paths:
+                 # Construct local save path relative to TEMP_LOCAL_DOWNLOAD_DIR
+                 # Remove leading slash from remote_path to make it relative
+                 local_save_path_relative = remote_path.lstrip('/')
+                 local_save_path_full = os.path.join(TEMP_LOCAL_DOWNLOAD_DIR, local_save_path_relative)
+
+                 # Ensure parent directories exist locally before enqueuing
+                 local_parent_dir = os.path.dirname(local_save_path_full)
+                 if local_parent_dir:
+                      os.makedirs(local_parent_dir, exist_ok=True)
+
+                 # Construct the FTP URL for parfive with credentials
+                 # Using quote_plus for username/password for safety
+                 try:
+                     from urllib.parse import quote_plus
+                     encoded_username = quote_plus(FTP_USERNAME)
+                     encoded_password = quote_plus(FTP_PASSWORD)
+                 except ImportError:
+                     print("Warning: urllib.parse not available, unable to quote username/password for URL. Proceeding without encoding.")
+                     encoded_username = FTP_USERNAME
+                     encoded_password = FTP_PASSWORD
+
+                 # ftp://user:pass@host:port/path
+                 ftp_url = f'ftp://{encoded_username}:{encoded_password}@{FTP_HOST}:{FTP_PORT}{remote_path}'
+
+                 print(f"Enqueueing remote file {remote_path} to download to local path {local_save_path_full}")
+                 # The path parameter in enqueue_file is the *full* local path including filename
+                 dl.enqueue_file(ftp_url, path=local_save_path_full)
+
+
+             # Perform the parallel download
+             download_results = await dl.download()
+
+             if download_results.errors:
+                 print("\nErrors occurred during parallel download:")
+                 for err_info in download_results.errors:
+                     # err_info.response might be the aioftp exception
+                     error_details = err_info.response
+                     print(f"- URL: {err_info.url}, Error: {error_details}")
+                 # Raise an error if any download failed
+                 raise RuntimeError(f"Failed to download {len(download_results.errors)} files during parallel download.")
+             else:
+                 print("\nParallel download completed successfully.")
+        else:
+            print("No files to download.")
+
+
+        # Create necessary local directories for zipping, even if they were empty on the server
+        # or contained only filtered-out files. This uses the list of directory paths collected earlier.
+        if remote_dir_paths:
+             print(f"Creating local directories for zipping based on collected structure...")
+             for dir_path in remote_dir_paths:
+                  # Construct local directory path relative to TEMP_LOCAL_DOWNLOAD_DIR
+                  local_dir_path_relative = dir_path.lstrip('/')
+                  local_dir_path_full = os.path.join(TEMP_LOCAL_DOWNLOAD_DIR, local_dir_path_relative).replace('\\', '/')
+                  # Ensure the directory path ends with a slash for clarity, though makedirs handles it
+                  if not local_dir_path_full.endswith('/'):
+                       local_dir_path_full += '/'
+                  os.makedirs(local_dir_path_full, exist_ok=True)
+                  print(f"Created local directory: {local_dir_path_full}")
+
+
+        # Create the zip file from the contents of the temporary local download directory
+        print(f"Starting zipping process from local directory: {TEMP_LOCAL_DOWNLOAD_DIR}")
+        zip_local_directory(TEMP_LOCAL_DOWNLOAD_DIR, TEMP_ZIP_FILE_PATH)
+        print(f"Zip file created at: {TEMP_ZIP_FILE_PATH}")
+
+        # Clean up the temporary local download directory
+        if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
+            print(f"Cleaning up temporary local download directory: {TEMP_LOCAL_DOWNLOAD_DIR}")
+            shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
+
+        return True # Indicate backup was successful
+
+    except Exception as e:
+        print(f"Failed during asynchronous FTP process: {e}")
+         # Clean up the temporary local download directory on failure
+        if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
+            print(f"Cleaning up temporary local download directory after error: {TEMP_LOCAL_DOWNLOAD_DIR}")
+            shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
+        # Re-raise the exception to be caught by the main try/except
+        raise
+
 # --- Main Execution ---
 if __name__ == "__main__":
     # We will write the zip to a temporary file on the runner before adding to git
     # This avoids potential memory issues with very large backups if the in-memory approach struggles.
-    # It's still 'zero local file' from your PC perspective.
 
-    # 1. Perform FTP Download and Zipping to a temporary file
-    print("Starting FTP download and zipping to temporary file...")
+    # Ensure temp local download dir is clean at the very start in case of previous failed runs
+    if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
+        print(f"Cleaning up existing temporary local download directory: {TEMP_LOCAL_DOWNLOAD_DIR}")
+        shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
+
+
+    # 1. Perform FTP Download and Zipping to a temporary file using parfive
+    print("Starting FTP download and zipping process using parfive...")
+    backup_successful = False
     try:
-        print(f"Connecting to FTP: {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
-        # Use ftplib for standard FTP
-        with ftplib.FTP() as ftp:
-             # Increased connection timeout (this timeout applies to connect and subsequent operations like login)
-             ftp.connect(FTP_HOST, FTP_PORT, timeout=120) # Increased connect timeout further
-             ftp.login(user=FTP_USERNAME, passwd=FTP_PASSWORD) # Removed timeout from login
-             print("FTP connection successful.")
+        # Use asyncio.run to execute the main asynchronous function
+        backup_successful = asyncio.run(async_ftp_process())
 
-             with zipfile.ZipFile(TEMP_ZIP_FILE_PATH, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zip_file: # Added allowZip64 for potentially large zips
-                 # Start the recursive download from the REMOTE_FTP_ROOT
-                 # Pass the ITEMS_TO_BACKUP list as the filter for the root level
-                 ftp_recursive_download_and_zip(ftp, REMOTE_FTP_ROOT, zip_file, "", items_filter=ITEMS_TO_BACKUP)
+        if not backup_successful:
+             print("FTP backup process skipped or failed during collection/download. No zip created.")
+             # Exit with a non-zero code if backup wasn't successful
+             sys.exit(1)
 
-             print(f"FTP download and zipping complete. Zip saved to {TEMP_ZIP_FILE_PATH}")
+        # Ensure the temporary zip exists before proceeding to git
+        if not os.path.exists(TEMP_ZIP_FILE_PATH):
+             print(f"Error: Temporary zip file {TEMP_ZIP_FILE_PATH} was not created by the FTP process.")
+             sys.exit(1)
+
 
     except Exception as e:
-        print(f"Failed during FTP process: {e}")
-        # Ensure the temporary zip is cleaned up on FTP failure
+        print(f"Overall FTP download and zipping process failed: {e}")
+        # The async function should handle cleanup, but a final check doesn't hurt
         if os.path.exists(TEMP_ZIP_FILE_PATH):
-             print(f"Cleaning up temporary zip file after FTP error: {TEMP_ZIP_FILE_PATH}")
+             print(f"Cleaning up temporary zip file after overall failure: {TEMP_ZIP_FILE_PATH}")
              os.remove(TEMP_ZIP_FILE_PATH)
         sys.exit(1)
+
 
     # 2. Clone Backup Repo, Add Backup, Remove Old, Commit, Push
     print("Starting GitHub backup process...")
 
-    # Clean up temp dir if it exists from a previous failed run
+    # Clean up temp repo dir if it exists from a previous failed run
     if os.path.exists(TEMP_REPO_DIR):
         print(f"Removing existing temporary repository directory: {TEMP_REPO_DIR}")
         shutil.rmtree(TEMP_REPO_DIR)
@@ -381,18 +475,18 @@ if __name__ == "__main__":
     try:
         setup_git_credentials()
         clone_backup_repo(BACKUP_REPO_URL, GITHUB_TOKEN, TEMP_REPO_DIR)
-        add_and_commit_backup(TEMP_REPO_DIR, TEMP_ZIP_FILE_PATH) # Use the path to the temp zip file
+        # add_and_commit_backup will now use the temporary zip file created by the async process
+        add_and_commit_backup(TEMP_REPO_DIR, TEMP_ZIP_FILE_PATH)
         print("GitHub backup process completed.")
     except Exception as e:
         print(f"Failed during GitHub process: {e}")
-        # Note: Git operations might fail for various reasons (network, permissions, etc.)
         sys.exit(1)
     finally:
         # Clean up the temporary repository directory
         if os.path.exists(TEMP_REPO_DIR):
             print(f"Cleaning up temporary repository directory: {TEMP_REPO_DIR}")
             shutil.rmtree(TEMP_REPO_DIR)
-        # Clean up the temporary zip file (should be done on FTP failure, but good to be sure)
+        # Clean up the temporary zip file (should be done after git push)
         if os.path.exists(TEMP_ZIP_FILE_PATH):
              print(f"Cleaning up temporary zip file: {TEMP_ZIP_FILE_PATH}")
              os.remove(TEMP_ZIP_FILE_PATH)
