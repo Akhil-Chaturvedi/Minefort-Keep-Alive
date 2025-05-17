@@ -95,15 +95,16 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     let currentUrlAfterLoginAttempt = page.url(); // Capture URL before waiting
     try {
         // Wait until the URL is no longer the login URL
-        await page.waitForURL((url) => !url.startsWith(LOGIN_URL), { timeout: 45000 });
-        currentUrlAfterLoginAttempt = page.url(); // Capture the new URL
+        // FIX: Use url.href to access the string representation of the URL
+        await page.waitForURL(url => !url.href.startsWith(LOGIN_URL), { timeout: 45000 });
+        currentUrlAfterLoginAttempt = page.url(); // Capture the new URL after successful wait
         console.log(`Successfully navigated away from login page. Current URL is: ${currentUrlAfterLoginAttempt}`);
 
     } catch (urlError) {
         currentUrlAfterLoginAttempt = page.url(); // Capture URL even if waitForURL times out
         console.error(`Timeout waiting for URL to change away from login page. Current URL: ${currentUrlAfterLoginAttempt}`);
 
-        // If after the timeout, we are still on the login page, it's a login failure.
+        // If after the timeout, we are still on the login page, login failed.
         if (currentUrlAfterLoginAttempt.startsWith(LOGIN_URL)) {
              const loginErrorElement = page.locator(LOGIN_ERROR_SELECTOR).first();
              let loginErrorText = "No specific error message found on page (after waiting for URL change).";
@@ -112,21 +113,21 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
              }
              throw new Error(`Login failed: Remained on login page after attempt. Page might have shown an error: "${loginErrorText}". URL after login attempt: ${currentUrlAfterLoginAttempt}. Original wait error: ${urlError.message}`);
         } else {
-             // If timeout happened but we are on a different URL, something else went wrong
-             throw new Error(`Login failed: Unexpected page after waiting for URL change. Current URL: ${currentUrlAfterLoginAttempt}. Original wait error: ${urlError.message}`);
+             // If timeout happened but we are on a different URL (like /servers),
+             // it means we successfully navigated away from login but the waitForURL condition
+             // might have timed out for another reason (e.g., page still loading).
+             // We will proceed as we are off the login page.
+             console.warn(`Timeout waiting for URL to change away from login page, but page is no longer login page. Current URL: ${currentUrlAfterLoginAttempt}. Proceeding.`);
+             // Do NOT throw error here, continue execution.
         }
     }
 
-    // Now that we are confirmed to be off the login page, check if we are on the servers list or specific server page
-    if (!currentUrlAfterLoginAttempt.startsWith(SERVERS_LIST_URL_PREFIX)) {
-        // If not on the servers list page or a subpage of it, it's an unexpected redirect
-        throw new Error(`Unexpected page after login. Expected to land on /servers or a subpage, but landed on: ${currentUrlAfterLoginAttempt}`);
-    }
+    // Now that we are confirmed (either by waitForURL or by checking after timeout)
+    // to be off the login page, check if we are on the servers list or specific server page.
+    console.log(`Checking current page after login attempt: ${currentUrlAfterLoginAttempt}`);
 
-    console.log(`Successfully reached a servers-related page: ${currentUrlAfterLoginAttempt}`);
-
-
-    // If we are on the servers list page but not the specific server dashboard, navigate there.
+    // If current URL is not the specific server dashboard, navigate there.
+    // This handles both landing on /servers or any other page after login.
     if (!currentUrlAfterLoginAttempt.startsWith(SERVER_DASHBOARD_URL)) {
         console.log(`Current URL is not the specific server dashboard. Navigating to: ${SERVER_DASHBOARD_URL}`);
         // Use goto and wait for it to load the specific server page
@@ -135,7 +136,6 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     } else {
         console.log('Already on the specific server dashboard or a subpage of it.');
     }
-
     // --- MODIFICATION END ---
 
 
