@@ -14,7 +14,7 @@ const SELECTORS = {
   cookieDeny: '#CybotCookiebotDialogBodyButtonDecline',
   email: 'input#email',
   password: 'input#password',
-  // signIn: 'button:has-text("Sign In")', // We'll try pressing Enter first
+  signIn: 'button:has-text("Sign In")', // Keep this selector
   wakeUp: 'button:has-text("Wake up server")',
   startServer: 'button:has-text("Start server")'
 };
@@ -73,13 +73,29 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     await page.fill(SELECTORS.email, MINEFORT_EMAIL);
     await page.fill(SELECTORS.password, MINEFORT_PASSWORD);
 
+    // --- MODIFICATION START ---
     console.log('Attempting to log in by pressing Enter in the password field...');
     await page.locator(SELECTORS.password).press('Enter');
+
+    // Give a moment for navigation to potentially start
+    await page.waitForTimeout(1000); // Wait for 1 second
+
+    const signInButton = page.locator(SELECTORS.signIn);
+
+    // Check if the Sign In button is still visible after pressing Enter
+    if (await signInButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log('"Sign In" button is still visible after pressing Enter. Clicking the button...');
+        await signInButton.click();
+    } else {
+        console.log('"Sign In" button is not visible after pressing Enter. Assuming navigation started.');
+    }
+    // --- MODIFICATION END ---
+
 
     console.log('Waiting for navigation to occur after login attempt...');
     let navigatedUrlAfterLoginAttempt = '';
     try {
-        // Wait for navigation to complete after pressing Enter
+        // Wait for navigation to complete after pressing Enter or clicking Sign In
         await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
         navigatedUrlAfterLoginAttempt = page.url(); // Capture URL immediately
         console.log(`Navigation completed. Current URL is: ${navigatedUrlAfterLoginAttempt}`);
