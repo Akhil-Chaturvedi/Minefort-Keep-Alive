@@ -10,19 +10,49 @@ import glob
 import asyncio
 import aioftp # parfive[ftp] requires aioftp
 import parfive # The parallel downloader
+from urllib.parse import quote_plus # Import quote_plus for URL encoding
 
 # --- Configuration from Environment Variables ---
-# FTP Details
-FTP_HOST = os.environ.get('FTP_HOST', 'ftp.minefort.com') # Use env var or default
-FTP_PORT = int(os.environ.get('FTP_PORT', 21)) # Use env var or default, ensure int
-FTP_USERNAME = os.environ.get('FTP_USERNAME')
-FTP_PASSWORD = os.environ.get('FTP_PASSWORD')
-REMOTE_FTP_ROOT = os.environ.get('REMOTE_FTP_ROOT', '/') # Use env var or default
+# Use os.environ.get and check for empty string before using the value or default
 
-# GitHub Details
-BACKUP_REPO_URL = os.environ.get('BACKUP_REPO_URL') # e.g., https://github.com/yourusername/your-backup-repo.git
-GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
-BACKUP_FOLDER_IN_REPO = os.environ.get('BACKUP_FOLDER_IN_REPO', 'backups') # Use env var or default
+ftp_host_env = os.environ.get('FTP_HOST')
+FTP_HOST = ftp_host_env if ftp_host_env else 'ftp.minefort.com' # Use env var if not empty, otherwise default
+print(f"Config: FTP_HOST = {FTP_HOST}")
+
+ftp_port_env = os.environ.get('FTP_PORT')
+# Check if env var exists and is not empty before converting to int, otherwise use default 21
+FTP_PORT = int(ftp_port_env) if ftp_port_env else 21
+print(f"Config: FTP_PORT = {FTP_PORT}")
+
+ftp_username_env = os.environ.get('FTP_USERNAME') # No default, required
+FTP_USERNAME = ftp_username_env
+print(f"Config: FTP_USERNAME = {'***' if FTP_USERNAME else 'Not Set'}")
+
+
+ftp_password_env = os.environ.get('FTP_PASSWORD') # No default, required
+FTP_PASSWORD = ftp_password_env
+print(f"Config: FTP_PASSWORD = {'***' if FTP_PASSWORD else 'Not Set'}")
+
+
+remote_ftp_root_env = os.environ.get('REMOTE_FTP_ROOT')
+REMOTE_FTP_ROOT = remote_ftp_root_env if remote_ftp_root_env else '/' # Use env var if not empty, otherwise default
+print(f"Config: REMOTE_FTP_ROOT = {REMOTE_FTP_ROOT}")
+
+
+backup_repo_url_env = os.environ.get('BACKUP_REPO_URL') # No default, required
+BACKUP_REPO_URL = backup_repo_url_env
+print(f"Config: BACKUP_REPO_URL = {'***' if BACKUP_REPO_URL else 'Not Set'}")
+
+
+github_token_env = os.environ.get('GITHUB_TOKEN') # No default, required for git push
+GITHUB_TOKEN = github_token_env
+print(f"Config: GITHUB_TOKEN = {'***' if GITHUB_TOKEN else 'Not Set'}")
+
+
+backup_folder_in_repo_env = os.environ.get('BACKUP_FOLDER_IN_REPO')
+BACKUP_FOLDER_IN_REPO = backup_folder_in_repo_env if backup_folder_in_repo_env else 'backups' # Use env var if not empty, otherwise default
+print(f"Config: BACKUP_FOLDER_IN_REPO = {BACKUP_FOLDER_IN_REPO}")
+
 
 # --- Items to Backup ---
 # Define the specific folders and files to include from the REMOTE_FTP_ROOT
@@ -32,13 +62,17 @@ ITEMS_TO_BACKUP = [
     "world_the_end",
     "usercache.json"
 ]
+print(f"Config: ITEMS_TO_BACKUP = {ITEMS_TO_BACKUP}")
+
 
 # --- Validation ---
+# Validation now checks the variables after attempting to read them from env or using defaults
 if not all([FTP_USERNAME, FTP_PASSWORD, BACKUP_REPO_URL, GITHUB_TOKEN]):
-    print("Error: FTP_USERNAME, FTP_PASSWORD, BACKUP_REPO_URL, and GITHUB_TOKEN environment variables must be set.")
+    print("Error: FTP_USERNAME, FTP_PASSWORD, BACKUP_REPO_URL, and GITHUB_TOKEN environment variables must be set and not empty.")
     sys.exit(1)
 if not ITEMS_TO_BACKUP:
     print("Warning: ITEMS_TO_BACKUP list is empty. No files or folders will be backed up.")
+
 
 # --- Constants ---
 # Include time for uniqueness if needed, and ensure it's URL/filename safe
@@ -62,7 +96,7 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
     try:
         # aioftp's list method returns a list of tuples (name, attributes)
         items_info = await ftp_client.list(remote_dir)
-        print(f"Items found in {remote_dir}: {[item_info[0] for item_info in items_info]}")
+        # print(f"Items found in {remote_dir}: {[item_info[0] for item_info in items_info]}") # Too verbose for many files
     except Exception as e:
         print(f"Error listing contents of directory {remote_dir}: {e}")
         # Log error and return what we have
@@ -79,7 +113,7 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
         # --- Filtering Logic ---
         # Apply filter only at the root directory level
         if items_filter is not None and remote_dir == REMOTE_FTP_ROOT and item_name not in items_filter:
-            print(f"Skipping item (not in root filter): {item_name}")
+            # print(f"Skipping item (not in root filter): {item_name}") # Too verbose
             continue
         # --- End Filtering Logic ---
 
@@ -92,10 +126,10 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
         if 'type' in item_attributes:
             if item_attributes['type'] == 'dir':
                 item_type = 'dir'
-                print(f"Identified as directory: {item_name}")
+                # print(f"Identified as directory: {item_name}") # Too verbose
             elif item_attributes['type'] == 'file':
                 item_type = 'file'
-                print(f"Identified as file: {item_name}")
+                # print(f"Identified as file: {item_name}") # Too verbose
             # Ignore other types like links for backup purposes
 
         if item_type == 'dir':
@@ -116,6 +150,7 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
         elif item_type == 'file':
             # Add the file path to the list
             remote_items.append((full_remote_item_path, 'file'))
+            # print(f"Collected file for download: {full_remote_item_path}") # Too verbose
 
     return remote_items
 
@@ -138,7 +173,7 @@ def zip_local_directory(local_dir, zip_filepath):
                 # Add directories to the zip (important for empty ones)
                 for dir in dirs:
                     zip_dir_path = os.path.join(relative_base_path_in_zip, dir).replace('\\', '/') + '/'
-                    print(f"Adding local directory entry to zip: {zip_dir_path}")
+                    # print(f"Adding local directory entry to zip: {zip_dir_path}") # Too verbose
                     try:
                         zipf.writestr(zip_dir_path, "")
                     except Exception as e:
@@ -150,7 +185,7 @@ def zip_local_directory(local_dir, zip_filepath):
                     full_local_file_path = os.path.join(root, file)
                     # Create the path for the file within the zip
                     zip_file_path = os.path.join(relative_base_path_in_zip, file).replace('\\', '/')
-                    print(f"Adding local file to zip: {zip_file_path}")
+                    # print(f"Adding local file to zip: {zip_file_path}") # Too verbose
                     try:
                         # Use zipf.write() which handles opening and reading the local file
                         zipf.write(full_local_file_path, zip_file_path)
@@ -162,7 +197,7 @@ def zip_local_directory(local_dir, zip_filepath):
         print(f"Error creating zip from local directory {local_dir}: {e}")
         raise # Re-raise the exception
 
-# --- GitHub Interaction (Mostly the same) ---
+# --- GitHub Interaction ---
 def setup_git_credentials():
     """Sets up Git credentials for the runner."""
     print("Setting up Git credentials...")
@@ -179,8 +214,20 @@ def clone_backup_repo(repo_url, token, target_dir):
     """Clones the backup repository using the token."""
     print(f"Cloning backup repository {repo_url} into {target_dir}...")
     # Embed token in the URL for cloning
-    repo_url_with_token = repo_url.replace('https://github.com/', f'https://oauth2:{token}@github.com/', 1)
-    repo_url_with_token = repo_url_with_token.replace('http://github.com/', f'http://oauth2:{token}@github.com/', 1)
+    # Use quote_plus for parts of the URL just in case
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed_url = urlparse(repo_url)
+        netloc_with_token = f'oauth2:{token}@{parsed_url.hostname}'
+        if parsed_url.port:
+             netloc_with_token += f':{parsed_url.port}'
+        repo_url_with_token = urlunparse(parsed_url._replace(netloc=netloc_with_token))
+
+    except ImportError:
+        print("Warning: urllib.parse not available, unable to robustly embed token in repo URL. Proceeding with simpler replacement.")
+        repo_url_with_token = repo_url.replace('https://github.com/', f'https://oauth2:{token}@github.com/', 1)
+        repo_url_with_token = repo_url_with_token.replace('http://github.com/', f'http://oauth2:{token}@github.com/', 1)
+
 
     try:
         subprocess.run(['git', 'clone', repo_url_with_token, target_dir], check=True)
@@ -201,23 +248,27 @@ def add_and_commit_backup(repo_dir, backup_filepath):
         if os.path.exists(backup_dir_full_path):
             print(f"Looking for old backups in {backup_dir_full_path}")
             # Use glob to find files matching the pattern
-            old_backups = sorted(glob.glob(os.path.join(backup_dir_full_path, "server_backup_*.zip")))
-            if old_backups:
-                print(f"Found potential old backups: {old_backups}")
-                # Get the filename of the new backup being added
-                new_backup_filename = os.path.basename(backup_filepath)
+            # Ensure pattern is relative to the git repo root for git rm
+            old_backups_pattern = os.path.join(BACKUP_FOLDER_IN_REPO, "server_backup_*.zip").replace('\\', '/')
+            old_backups_relative_paths = sorted(glob.glob(old_backups_pattern))
+
+            if old_backups_relative_paths:
+                print(f"Found potential old backups (relative paths): {old_backups_relative_paths}")
+                # Get the filename of the new backup being added relative to the repo root
+                new_backup_relative_path = os.path.join(BACKUP_FOLDER_IN_REPO, os.path.basename(backup_filepath)).replace('\\', '/')
 
                 # Keep the latest backup (the one we just created)
                 # Remove all other old backups found
-                for old_file_path in old_backups:
-                    if os.path.basename(old_file_path) != new_backup_filename:
-                        print(f"Found old backup, attempting to remove: {old_file_path}")
+                for old_file_relative_path in old_backups_relative_paths:
+                    if old_file_relative_path != new_backup_relative_path:
+                        print(f"Found old backup, attempting to remove: {old_file_relative_path}")
                         try:
-                            # Use git rm to remove the file and stage the deletion
-                            subprocess.run(['git', 'rm', '-f', old_file_path], check=True)
-                            print(f"Staged removal of {old_file_path}")
+                            # Use git rm to remove the file from the index and working tree
+                            subprocess.run(['git', 'rm', '--cached', old_file_relative_path], check=False, capture_output=True) # --cached only from index
+                            subprocess.run(['git', 'rm', '-f', old_file_relative_path], check=False, capture_output=True) # -f to remove from working tree and index
+                            print(f"Attempted git rm on {old_file_relative_path}")
                         except subprocess.CalledProcessError as e:
-                            print(f"Warning: Error staging removal of old backup {old_file_path}: {e}")
+                            print(f"Warning: Error attempting git rm of old backup {old_file_relative_path}: {e.stderr.decode()}")
                             # Log warning but try to continue
 
 
@@ -231,13 +282,16 @@ def add_and_commit_backup(repo_dir, backup_filepath):
         print(f"Copied created zip to {new_backup_target_path}")
 
         # Add the new backup file to staging
-        print(f"Adding new backup file to git staging: {new_backup_target_path}")
+        # Path should be relative to the git repo root
+        new_backup_target_path_relative = os.path.join(BACKUP_FOLDER_IN_REPO, os.path.basename(backup_filepath)).replace('\\', '/')
+        print(f"Adding new backup file to git staging: {new_backup_target_path_relative}")
         try:
-            subprocess.run(['git', 'add', new_backup_target_path], check=True)
+            subprocess.run(['git', 'add', new_backup_target_path_relative], check=True)
             print("New backup file added to staging.")
         except subprocess.CalledProcessError as e:
-            print(f"Error adding new backup file {new_backup_target_path}: {e}")
+            print(f"Error adding new backup file {new_backup_target_path_relative}: {e.stderr.decode()}")
             sys.exit(1)
+
 
         # Commit changes
         # Check if there are any staged changes before committing
@@ -249,7 +303,7 @@ def add_and_commit_backup(repo_dir, backup_filepath):
                 subprocess.run(['git', 'commit', '-m', commit_message], check=True)
                 print("Changes committed.")
             except subprocess.CalledProcessError as e:
-                print(f"Error committing changes: {e}")
+                print(f"Error committing changes: {e.stderr.decode()}")
                 # If commit fails, something is wrong. Exit.
                 sys.exit(1)
         else:
@@ -267,9 +321,20 @@ def add_and_commit_backup(repo_dir, backup_filepath):
                  sys.exit(1)
             # Get the URL for the 'origin' remote (or the detected remote_name)
             original_remote_url = subprocess.run(['git', 'remote', 'get-url', remote_name], capture_output=True, text=True, check=True).stdout.strip()
-             # Replace potential http/https with token embedded version for push
-            push_url = original_remote_url.replace('https://github.com/', f'https://oauth2:{GITHUB_TOKEN}@github.com/', 1)
-            push_url = push_url.replace('http://github.com/', f'http://oauth2:{GITHUB_TOKEN}@github.com/', 1)
+
+             # Reconstruct the push URL with the token using urlparse for robustness
+            try:
+                from urllib.parse import urlparse, urlunparse
+                parsed_url = urlparse(original_remote_url)
+                netloc_with_token = f'oauth2:{GITHUB_TOKEN}@{parsed_url.hostname}'
+                if parsed_url.port:
+                     netloc_with_token += f':{parsed_url.port}'
+                push_url = urlunparse(parsed_url._replace(netloc=netloc_with_token))
+            except ImportError:
+                print("Warning: urllib.parse not available, unable to robustly embed token in push URL. Proceeding with simpler replacement.")
+                push_url = original_remote_url.replace('https://github.com/', f'https://oauth2:{GITHUB_TOKEN}@github.com/', 1)
+                push_url = push_url.replace('http://github.com/', f'http://oauth2:{GITHUB_TOKEN}@github.com/', 1)
+
 
             # Push the current branch (HEAD) to its upstream
             current_branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
@@ -278,11 +343,19 @@ def add_and_commit_backup(repo_dir, backup_filepath):
             # Or standard push if keeping history (e.g. keeping multiple dated backups)
             # With deleting old ones, standard push should work unless there are merge conflicts (unlikely in a dedicated backup repo)
             print(f"Pushing from branch {current_branch} to {push_url}")
-            subprocess.run(['git', 'push', push_url, current_branch], check=True)
+            # Increased timeout for push
+            subprocess.run(['git', 'push', push_url, current_branch], check=True, timeout=180) # 3 minutes
             print("Changes pushed successfully.")
         except subprocess.CalledProcessError as e:
-            print(f"Error pushing changes: {e}")
+            print(f"Error pushing changes: {e.stderr.decode()}")
             sys.exit(1)
+        except subprocess.TimeoutExpired:
+            print("Error: Git push timed out.")
+            sys.exit(1)
+        except Exception as e:
+             print(f"An unexpected error occurred during git push: {e}")
+             sys.exit(1)
+
     except Exception as e:
          print(f"An unexpected error occurred during git operations: {e}")
          sys.exit(1)
@@ -294,12 +367,14 @@ def add_and_commit_backup(repo_dir, backup_filepath):
 # --- Asynchronous FTP Process (using aioftp and parfive) ---
 async def async_ftp_process():
     """Asynchronous function to handle FTP connection, file collection, and parallel download."""
+    print(f"Starting asynchronous FTP process...")
     print(f"Connecting to FTP (aioftp): {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
     client = None
     remote_items_to_process = []
     try:
         # Connect to FTP using aioftp
-        client = aioftp.Client(timeout=180) # Set client-level timeout
+        # Set client-level timeout, applies to connect, login, and commands
+        client = aioftp.Client(timeout=180) # 3 minutes
         await client.connect(FTP_HOST, FTP_PORT)
         await client.login(FTP_USERNAME, FTP_PASSWORD)
         print("FTP connection successful (aioftp).")
@@ -325,7 +400,8 @@ async def async_ftp_process():
             print("No files or directories found to backup based on filter. Exiting FTP process.")
             return False # Indicate no backup needed
 
-        # Clean up existing temp local download dir
+
+        # Clean up existing temp local download dir before creating
         if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
             print(f"Removing existing temporary local download directory: {TEMP_LOCAL_DOWNLOAD_DIR}")
             shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
@@ -339,7 +415,14 @@ async def async_ftp_process():
              # max_connections: Number of parallel connections (adjust based on runner/server limits)
              # file_progress: Show progress bars for individual files
              # initial_transfer_size: Initial chunk size for downloads
-             dl = parfive.Downloader(max_connections=5, file_progress=True, initial_transfer_size=1024*1024) # 1MB initial chunk
+             # connect_timeout and timeout are also important for parfive downloads
+             dl = parfive.Downloader(
+                 max_connections=5, # Can increase this for more parallelism
+                 file_progress=True,
+                 initial_transfer_size=1024*1024, # 1MB initial chunk size
+                 connect_timeout=60, # Timeout for establishing each download connection
+                 timeout=180 # Total timeout for each individual file download
+             )
 
 
              # Enqueue files for parallel download
@@ -347,7 +430,7 @@ async def async_ftp_process():
                  # Construct local save path relative to TEMP_LOCAL_DOWNLOAD_DIR
                  # Remove leading slash from remote_path to make it relative
                  local_save_path_relative = remote_path.lstrip('/')
-                 local_save_path_full = os.path.join(TEMP_LOCAL_DOWNLOAD_DIR, local_save_path_relative)
+                 local_save_path_full = os.path.join(TEMP_LOCAL_DOWNLOAD_DIR, local_save_path_relative).replace('\\', '/')
 
                  # Ensure parent directories exist locally before enqueuing
                  local_parent_dir = os.path.dirname(local_save_path_full)
@@ -356,24 +439,19 @@ async def async_ftp_process():
 
                  # Construct the FTP URL for parfive with credentials
                  # Using quote_plus for username/password for safety
-                 try:
-                     from urllib.parse import quote_plus
-                     encoded_username = quote_plus(FTP_USERNAME)
-                     encoded_password = quote_plus(FTP_PASSWORD)
-                 except ImportError:
-                     print("Warning: urllib.parse not available, unable to quote username/password for URL. Proceeding without encoding.")
-                     encoded_username = FTP_USERNAME
-                     encoded_password = FTP_PASSWORD
+                 encoded_username = quote_plus(FTP_USERNAME)
+                 encoded_password = quote_plus(FTP_PASSWORD)
 
                  # ftp://user:pass@host:port/path
                  ftp_url = f'ftp://{encoded_username}:{encoded_password}@{FTP_HOST}:{FTP_PORT}{remote_path}'
 
-                 print(f"Enqueueing remote file {remote_path} to download to local path {local_save_path_full}")
+                 # print(f"Enqueueing remote file {remote_path} to download to local path {local_save_path_full}") # Too verbose
                  # The path parameter in enqueue_file is the *full* local path including filename
                  dl.enqueue_file(ftp_url, path=local_save_path_full)
 
 
              # Perform the parallel download
+             print("Executing parallel download...")
              download_results = await dl.download()
 
              if download_results.errors:
@@ -399,10 +477,10 @@ async def async_ftp_process():
                   local_dir_path_relative = dir_path.lstrip('/')
                   local_dir_path_full = os.path.join(TEMP_LOCAL_DOWNLOAD_DIR, local_dir_path_relative).replace('\\', '/')
                   # Ensure the directory path ends with a slash for clarity, though makedirs handles it
-                  if not local_dir_path_full.endswith('/'):
+                  if not local_dir_path_full.endswith('/') and local_dir_path_full != TEMP_LOCAL_DOWNLOAD_DIR:
                        local_dir_path_full += '/'
                   os.makedirs(local_dir_path_full, exist_ok=True)
-                  print(f"Created local directory: {local_dir_path_full}")
+                  # print(f"Created local directory: {local_dir_path_full}") # Too verbose
 
 
         # Create the zip file from the contents of the temporary local download directory
@@ -426,15 +504,20 @@ async def async_ftp_process():
         # Re-raise the exception to be caught by the main try/except
         raise
 
+
 # --- Main Execution ---
 if __name__ == "__main__":
-    # We will write the zip to a temporary file on the runner before adding to git
-    # This avoids potential memory issues with very large backups if the in-memory approach struggles.
+    # This script is intended to be run by GitHub Actions.
 
     # Ensure temp local download dir is clean at the very start in case of previous failed runs
     if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
-        print(f"Cleaning up existing temporary local download directory: {TEMP_LOCAL_DOWNLOAD_DIR}")
+        print(f"Initial cleanup: Removing existing temporary local download directory: {TEMP_LOCAL_DOWNLOAD_DIR}")
         shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
+
+    # Ensure temp zip file is clean at the very start
+    if os.path.exists(TEMP_ZIP_FILE_PATH):
+        print(f"Initial cleanup: Removing existing temporary zip file: {TEMP_ZIP_FILE_PATH}")
+        os.remove(TEMP_ZIP_FILE_PATH)
 
 
     # 1. Perform FTP Download and Zipping to a temporary file using parfive
@@ -442,6 +525,7 @@ if __name__ == "__main__":
     backup_successful = False
     try:
         # Use asyncio.run to execute the main asynchronous function
+        # This block handles the FTP connection, file collection, and parallel download
         backup_successful = asyncio.run(async_ftp_process())
 
         if not backup_successful:
@@ -453,11 +537,13 @@ if __name__ == "__main__":
         if not os.path.exists(TEMP_ZIP_FILE_PATH):
              print(f"Error: Temporary zip file {TEMP_ZIP_FILE_PATH} was not created by the FTP process.")
              sys.exit(1)
+        else:
+             print(f"Temporary zip file successfully created at: {TEMP_ZIP_FILE_PATH}")
 
 
     except Exception as e:
         print(f"Overall FTP download and zipping process failed: {e}")
-        # The async function should handle cleanup, but a final check doesn't hurt
+        # The async function should handle cleanup of local download dir, but a final zip check doesn't hurt
         if os.path.exists(TEMP_ZIP_FILE_PATH):
              print(f"Cleaning up temporary zip file after overall failure: {TEMP_ZIP_FILE_PATH}")
              os.remove(TEMP_ZIP_FILE_PATH)
@@ -486,9 +572,10 @@ if __name__ == "__main__":
         if os.path.exists(TEMP_REPO_DIR):
             print(f"Cleaning up temporary repository directory: {TEMP_REPO_DIR}")
             shutil.rmtree(TEMP_REPO_DIR)
-        # Clean up the temporary zip file (should be done after git push)
+        # Clean up the temporary zip file (should be done after successful push)
+        # Added a check here just in case, although the previous try/except in main should handle it on failure
         if os.path.exists(TEMP_ZIP_FILE_PATH):
-             print(f"Cleaning up temporary zip file: {TEMP_ZIP_FILE_PATH}")
+             print(f"Final cleanup: Cleaning up temporary zip file: {TEMP_ZIP_FILE_PATH}")
              os.remove(TEMP_ZIP_FILE_PATH)
 
 
