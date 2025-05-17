@@ -325,7 +325,7 @@ def add_and_commit_backup(repo_dir, backup_filepath):
             # Get the current remote URL from the cloned repo config
             remote_name = subprocess.run(['git', 'remote'], capture_output=True, text=True, check=True).stdout.strip()
             if not remote_name:
-                 print("Error: Could not determine git remote name.")
+                 print("Error: Could not determine git remote name name.") # Corrected typo
                  sys.exit(1)
             # Get the URL for the 'origin' remote (or the detected remote_name)
             original_remote_url = subprocess.run(['git', 'remote', 'get-url', remote_name], capture_output=True, text=True, check=True).stdout.strip()
@@ -334,14 +334,27 @@ def add_and_commit_backup(repo_dir, backup_filepath):
             try:
                 from urllib.parse import urlparse, urlunparse
                 parsed_url = urlparse(original_remote_url)
+                # Ensure we handle cases where hostname might be empty or other issues
+                if not parsed_url.hostname:
+                     raise ValueError("Could not parse hostname from remote URL for token embedding.")
+
                 netloc_with_token = f'oauth2:{GITHUB_TOKEN}@{parsed_url.hostname}'
                 if parsed_url.port:
                      netloc_with_token += f':{parsed_url.port}'
                 push_url = urlunparse(parsed_url._replace(netloc=netloc_with_token))
+                print(f"Using push URL: {push_url.replace(GITHUB_TOKEN, '***')}") # Mask token in logs
+
             except ImportError:
                 print("Warning: urllib.parse not available, unable to robustly embed token in push URL. Proceeding with simpler replacement.")
                 push_url = original_remote_url.replace('https://github.com/', f'https://oauth2:{GITHUB_TOKEN}@github.com/', 1)
                 push_url = push_url.replace('http://github.com/', f'http://oauth2:{GITHUB_TOKEN}@github.com/', 1)
+                print(f"Using push URL: {push_url.replace(GITHUB_TOKEN, '***')}") # Mask token in logs
+            except ValueError as ve:
+                 print(f"Error embedding token in push URL: {ve}")
+                 sys.exit(1)
+            except Exception as e:
+                 print(f"An unexpected error occurred during push URL construction: {e}")
+                 sys.exit(1)
 
 
             # Push the current branch (HEAD) to its upstream
@@ -350,7 +363,7 @@ def add_and_commit_backup(repo_dir, backup_filepath):
             # Use --force-with-lease if overwriting history (e.g. always having only 1 backup file)
             # Or standard push if keeping history (e.g. keeping multiple dated backups)
             # With deleting old ones, standard push should work unless there are merge conflicts (unlikely in a dedicated backup repo)
-            print(f"Pushing from branch {current_branch} to {push_url}")
+            print(f"Pushing from branch {current_branch}...")
             # Increased timeout for push
             subprocess.run(['git', 'push', push_url, current_branch], check=True, timeout=300) # 5 minutes
             print("Changes pushed successfully.")
@@ -376,12 +389,11 @@ def add_and_commit_backup(repo_dir, backup_filepath):
 async def async_ftp_process():
     """Asynchronous function to handle FTP connection, file collection, and parallel download."""
     print(f"Starting asynchronous FTP process...")
-    client = None
+    client = None # Initialize client to None
     remote_items_to_process = []
 
     try:
-        # Connect to FTP using aioftp
-        # Set client-level timeout for FTP commands *after* connection
+        # Initialize aioftp client - timeout here is for commands *after* connection
         client = aioftp.Client(timeout=180) # 3 minutes for commands
 
         print(f"Connecting to FTP (aioftp): {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
@@ -399,8 +411,11 @@ async def async_ftp_process():
         # Close connection after collecting paths
         # It's generally better to close connections you are done with,
         # parfive will open its own connections for downloading.
-        await client.close()
-        print("Closed aioftp client connection after collecting items.")
+        if client and client.is_connected(): # Check if client is connected before closing
+            await client.close()
+            print("Closed aioftp client connection after collecting items.")
+        else:
+            print("aioftp client not connected after collecting items (already closed or failed earlier).")
 
 
         # Filter out directory markers, only keep file paths for downloading
@@ -515,8 +530,8 @@ async def async_ftp_process():
         if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
             print(f"Cleaning up temporary local download directory after error: {TEMP_LOCAL_DOWNLOAD_DIR}")
             shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
-        # Ensure client is closed if it was created before the error
-        if client and not client.closed:
+        # Ensure client is closed if it was created before the error and is connected
+        if client and client.is_connected():
              await client.close()
         raise # Re-raise the timeout error to be caught by the main try/except
     except Exception as e:
@@ -525,8 +540,8 @@ async def async_ftp_process():
         if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
             print(f"Cleaning up temporary local download directory after error: {TEMP_LOCAL_DOWNLOAD_DIR}")
             shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
-        # Ensure client is closed if it was created before the error
-        if client and not client.closed:
+        # Ensure client is closed if it was created before the error and is connected
+        if client and client.is_connected():
              await client.close()
         # Re-raise the exception to be caught by the main try/except
         raise
