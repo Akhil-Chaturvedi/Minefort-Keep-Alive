@@ -84,6 +84,13 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
         if item in ('.', '..'):
             continue
 
+        # --- EXCLUSION LOGIC ---
+        if item == '.cache':
+             print(f"Skipping excluded item: {os.path.join(remote_dir, item)}")
+             continue
+        # --- END EXCLUSION LOGIC ---
+
+
         # Construct the full remote path for the item
         # This is the path from the FTP root
         # Use os.path.join for robustness and replace backslashes for FTP
@@ -234,7 +241,6 @@ def add_and_commit_backup(repo_dir, backup_filepath):
                         print(f"Found old backup, attempting to remove: {old_file_path}")
                         try:
                             # Use git rm to remove the file and stage the deletion
-                            # Add --cached if you only want to remove from index, not working tree
                             subprocess.run(['git', 'rm', '-f', old_file_path], check=True)
                             print(f"Staged removal of {old_file_path}")
                         except subprocess.CalledProcessError as e:
@@ -325,7 +331,6 @@ if __name__ == "__main__":
         # Use ftplib for standard FTP
         with ftplib.FTP() as ftp:
              # Increased connection timeout (this timeout applies to connect and subsequent operations like login)
-             # FIX: Timeout only on connect, not login
              ftp.connect(FTP_HOST, FTP_PORT, timeout=120) # Increased connect timeout further
              ftp.login(user=FTP_USERNAME, passwd=FTP_PASSWORD) # Removed timeout from login
              print("FTP connection successful.")
