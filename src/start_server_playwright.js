@@ -8,6 +8,7 @@ const FTP_USERNAME = process.env.FTP_USERNAME; // Using FTP_USERNAME as the serv
 // --- Selectors ---
 const LOGIN_URL = 'https://minefort.com/login';
 const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${FTP_USERNAME}`; // Your specific server page URL
+const SERVERS_LIST_URL_PREFIX = 'https://minefort.com/servers'; // Prefix for the servers list page
 
 const SELECTORS = {
   cookieDialog: '#CybotCookiebotDialog',
@@ -90,54 +91,50 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     }
 
     // --- MODIFICATION START ---
-    console.log('Waiting for initial navigation after login attempt (expecting /servers)...');
-    let currentUrlAfterLogin = '';
+    console.log('Waiting for URL to change away from login page after login attempt...');
+    let currentUrlAfterLoginAttempt = page.url(); // Capture URL before waiting
     try {
-        // Wait for the first navigation that should land on /servers
-        // Increased timeout slightly as login redirects can sometimes take longer
-        await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 45000 });
-        currentUrlAfterLogin = page.url();
-        console.log(`Initial navigation completed. Current URL is: ${currentUrlAfterLogin}`);
-    } catch (navError) {
-        currentUrlAfterLogin = page.url();
-         // If timeout occurred and we are on the servers page, we can potentially proceed.
-         // If still on login page, throw the error.
-         if (currentUrlAfterLogin.startsWith(LOGIN_URL)) {
+        // Wait until the URL is no longer the login URL
+        await page.waitForURL((url) => !url.startsWith(LOGIN_URL), { timeout: 45000 });
+        currentUrlAfterLoginAttempt = page.url(); // Capture the new URL
+        console.log(`Successfully navigated away from login page. Current URL is: ${currentUrlAfterLoginAttempt}`);
+
+    } catch (urlError) {
+        currentUrlAfterLoginAttempt = page.url(); // Capture URL even if waitForURL times out
+        console.error(`Timeout waiting for URL to change away from login page. Current URL: ${currentUrlAfterLoginAttempt}`);
+
+        // If after the timeout, we are still on the login page, it's a login failure.
+        if (currentUrlAfterLoginAttempt.startsWith(LOGIN_URL)) {
              const loginErrorElement = page.locator(LOGIN_ERROR_SELECTOR).first();
-             let loginErrorText = "No specific error message found on page after initial nav timeout.";
-              if (await loginErrorElement.isVisible({timeout: 1000}).catch(() => false)) {
+             let loginErrorText = "No specific error message found on page (after waiting for URL change).";
+              if (await loginErrorElement.isVisible({timeout: 2000}).catch(() => false)) {
                  loginErrorText = await loginErrorElement.textContent({timeout:1000}) || "Error message element found but was empty.";
              }
-             throw new Error(`Login failed: Still on login page after initial navigation timeout. Page might have shown an error: "${loginErrorText}". URL during navError: ${currentUrlAfterLogin}. Original navigation error: ${navError.message}`);
-         } else if (currentUrlAfterLogin.startsWith('https://minefort.com/servers')) {
-             console.warn(`Initial navigation timeout on servers list page (${currentUrlAfterLogin}), but proceeding as we might have reached the correct general area.`);
-         } else {
-            // Unexpected page after navigation attempt
-            throw new Error(`Login failed: Unexpected navigation error after login attempt. Current URL: ${currentUrlAfterLogin}. Original error: ${navError.message}`);
-         }
-    }
-
-
-    // Check if the initial navigation landed on the expected servers page or was an error
-    if (currentUrlAfterLogin.startsWith(LOGIN_URL)) {
-         const loginErrorElement = page.locator(LOGIN_ERROR_SELECTOR).first();
-        let loginErrorText = "No specific error message found on page after initial navigation completed (but still on login page).";
-         if (await loginErrorElement.isVisible({timeout: 2000}).catch(() => false)) {
-            loginErrorText = await loginErrorElement.textContent({timeout:1000}) || "Error message element found but was empty.";
+             throw new Error(`Login failed: Remained on login page after attempt. Page might have shown an error: "${loginErrorText}". URL after login attempt: ${currentUrlAfterLoginAttempt}. Original wait error: ${urlError.message}`);
+        } else {
+             // If timeout happened but we are on a different URL, something else went wrong
+             throw new Error(`Login failed: Unexpected page after waiting for URL change. Current URL: ${currentUrlAfterLoginAttempt}. Original wait error: ${urlError.message}`);
         }
-        throw new Error(`Login failed: Redirected back to or remained on login page after initial navigation. Page might have shown an error: "${loginErrorText}". URL after login attempt: ${currentUrlAfterLogin}`);
-    } else if (!currentUrlAfterLogin.startsWith('https://minefort.com/servers')) {
-         // If not on login page, but also not on the servers list page, something else is wrong
-         console.warn(`Unexpected initial landing page after login. Expected to land on /servers, but landed on: ${currentUrlAfterLogin}. Attempting to proceed to server dashboard anyway.`);
-    } else {
-         console.log(`Successfully reached the servers list page: ${currentUrlAfterLogin}`);
     }
 
-    // Now, explicitly navigate to the specific server dashboard URL
-    console.log(`Navigating to specific server dashboard: ${SERVER_DASHBOARD_URL}`);
-    // Use goto and wait for it to load the specific server page
-    await page.goto(SERVER_DASHBOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }); // Increased timeout for server page load
-    console.log('Navigated to server dashboard.');
+    // Now that we are confirmed to be off the login page, check if we are on the servers list or specific server page
+    if (!currentUrlAfterLoginAttempt.startsWith(SERVERS_LIST_URL_PREFIX)) {
+        // If not on the servers list page or a subpage of it, it's an unexpected redirect
+        throw new Error(`Unexpected page after login. Expected to land on /servers or a subpage, but landed on: ${currentUrlAfterLoginAttempt}`);
+    }
+
+    console.log(`Successfully reached a servers-related page: ${currentUrlAfterLoginAttempt}`);
+
+
+    // If we are on the servers list page but not the specific server dashboard, navigate there.
+    if (!currentUrlAfterLoginAttempt.startsWith(SERVER_DASHBOARD_URL)) {
+        console.log(`Current URL is not the specific server dashboard. Navigating to: ${SERVER_DASHBOARD_URL}`);
+        // Use goto and wait for it to load the specific server page
+        await page.goto(SERVER_DASHBOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }); // Increased timeout for server page load
+        console.log('Navigated to server dashboard.');
+    } else {
+        console.log('Already on the specific server dashboard or a subpage of it.');
+    }
 
     // --- MODIFICATION END ---
 
