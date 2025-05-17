@@ -40,6 +40,7 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
     print(f"Processing remote directory: {remote_dir}")
 
     # Ensure we are in the correct remote directory on the FTP server
+    original_cwd_before_entry = ftp_client.pwd() # Store CWD before attempting to change into remote_dir
     try:
         ftp_client.cwd(remote_dir)
         print(f"Successfully changed to directory: {ftp_client.pwd()}") # Verify CWD
@@ -57,26 +58,26 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
         print(f"Items in {remote_dir}: {items}")
     except ftplib.error_perm as e:
         print(f"Permission error listing contents of directory {remote_dir}: {e}")
-        # Stay in the directory and try to process what we can if list failed
-        # Or decide to skip this directory entirely. Let's log and return for now.
-        # Before returning, try to go back up if we changed into it.
+        # Log error and return. Ensure we change back up if we successfully changed into remote_dir.
         try:
-            ftp_client.cwd('..')
-            print(f"Changed back to parent directory after list error.")
+            if ftp_client.pwd() != original_cwd_before_entry:
+                 ftp_client.cwd('..')
+                 print(f"Changed back to parent directory after list permission error.")
         except:
             pass
         return
     except Exception as e:
         print(f"Error listing contents of directory {remote_dir}: {e}")
         try:
-            ftp_client.cwd('..')
-            print(f"Changed back to parent directory after list error.")
+             if ftp_client.pwd() != original_cwd_before_entry:
+                 ftp_client.cwd('..')
+                 print(f"Changed back to parent directory after list error.")
         except:
             pass
         return
 
 
-    current_ftp_cwd = ftp_client.pwd() # Get the current CWD on the server
+    current_ftp_cwd = ftp_client.pwd() # Get the current CWD on the server after successfully changing into remote_dir
 
     for item in items:
         # Skip special directories if any (like . or ..)
@@ -85,12 +86,25 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
 
         # Construct the full remote path for the item
         # This is the path from the FTP root
-        full_remote_item_path = f"{current_ftp_cwd}/{item}".replace('//', '/')
+        # Use os.path.join for robustness and replace backslashes for FTP
+        full_remote_item_path = os.path.join(current_ftp_cwd, item).replace('\\', '/')
+        # Ensure no double slashes unless it's the root
+        if full_remote_item_path != '/' and full_remote_item_path.startswith('//'):
+             full_remote_item_path = full_remote_item_path[1:]
+
         # Path within the zip file relative to the initial REMOTE_FTP_ROOT
+        # Ensure base_zip_path handles the initial '/' correctly
         zip_path_in_zip = os.path.join(base_zip_path, item).replace('\\', '/')
+        # Remove leading slash from zip_path_in_zip if it corresponds to the root
+        if zip_path_in_zip.startswith('/') and base_zip_path == "":
+             zip_path_in_zip = zip_path_in_zip[1:]
+        if zip_path_in_zip.startswith('./'): # Clean up relative path start
+             zip_path_in_zip = zip_path_in_zip[2:]
+        if zip_path_in_zip == '.' and remote_dir == REMOTE_FTP_ROOT:
+             zip_path_in_zip = "" # Handle root directory entry
 
 
-        print(f"Considering item: {item}")
+        print(f"Considering item: {item} (Remote: {full_remote_item_path}, Zip: {zip_path_in_zip})")
 
         is_directory = False
         original_cwd_before_check = ftp_client.pwd() # Store CWD before attempting to change into item
@@ -110,26 +124,29 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
             print(f"Identified as file: {item}")
         except Exception as e:
             # Other errors during cwd attempt
-            print(f"Error while trying to determine if {item} is directory: {e}")
-            # Assume it's not a directory and continue, or skip? Let's skip for safety.
+            print(f"Error while trying to determine if {item} is directory: {e}. Skipping item.")
             continue # Skip this item
+
 
         if is_directory:
             # Add directory entry to zip (important for empty dirs)
-            # Ensure directory path in zip ends with a slash
+            # Ensure directory path in zip ends with a slash unless it's the root entry
             dir_zip_path = zip_path_in_zip
-            if not dir_zip_path.endswith('/'):
+            if dir_zip_path and not dir_zip_path.endswith('/'):
                 dir_zip_path += '/'
-            print(f"Adding directory entry to zip: {dir_zip_path}")
+            print(f"Adding directory entry to zip: {dir_zip_path if dir_zip_path else remote_dir}")
             try:
                 # Add an empty string to signify a directory entry
-                zip_file.writestr(dir_zip_path, "")
+                # Only add if it's not the root directory entry itself
+                if dir_zip_path:
+                    zip_file.writestr(dir_zip_path, "")
             except Exception as e:
                  print(f"Warning: Error adding directory {dir_zip_path} entry to zip: {e}")
 
             # Recurse into this directory
             # The recursive call will handle changing into the subdirectory
-            ftp_recursive_download_and_zip(ftp_client, full_remote_item_path, zip_file, os.path.join(base_zip_path, item))
+            # The base_zip_path for the recursive call is the zip_path_in_zip of the current directory
+            ftp_recursive_download_and_zip(ftp_client, full_remote_item_path, zip_file, zip_path_in_zip)
 
             # After the recursive call returns, the FTP client's CWD should be the parent directory
             # of the directory we just processed (because the recursive call changes back up).
@@ -138,7 +155,7 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
 
         else: # It's a file
             # We are currently in remote_dir on the FTP server, so we can directly RETR the item name
-            print(f"Downloading file and adding to zip: {zip_path_in_zip}")
+            print(f"Downloading file and adding to zip: {zip_path_in_zip if zip_path_in_zip else item}")
             try:
                 with io.BytesIO() as file_buffer:
                      # ftplib's retrbinary takes a command and a callback
@@ -147,7 +164,7 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
                      file_buffer.seek(0)
                      # Add file from buffer to zip
                      zip_file.writestr(zip_path_in_zip, file_buffer.read())
-                print(f"Successfully added {zip_path_in_zip} to zip.")
+                print(f"Successfully added {zip_path_in_zip if zip_path_in_zip else item} to zip.")
 
             except ftplib.error_perm as e:
                  print(f"Permission error downloading file {full_remote_item_path}: {e}")
@@ -217,6 +234,7 @@ def add_and_commit_backup(repo_dir, backup_filepath):
                         print(f"Found old backup, attempting to remove: {old_file_path}")
                         try:
                             # Use git rm to remove the file and stage the deletion
+                            # Add --cached if you only want to remove from index, not working tree
                             subprocess.run(['git', 'rm', '-f', old_file_path], check=True)
                             print(f"Staged removal of {old_file_path}")
                         except subprocess.CalledProcessError as e:
@@ -306,15 +324,16 @@ if __name__ == "__main__":
         print(f"Connecting to FTP: {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
         # Use ftplib for standard FTP
         with ftplib.FTP() as ftp:
-             # Increased connection timeout
-             ftp.connect(FTP_HOST, FTP_PORT, timeout=60)
-             # Increased login timeout
-             ftp.login(user=FTP_USERNAME, passwd=FTP_PASSWORD, timeout=60)
+             # Increased connection timeout (this timeout applies to connect and subsequent operations like login)
+             # FIX: Timeout only on connect, not login
+             ftp.connect(FTP_HOST, FTP_PORT, timeout=120) # Increased connect timeout further
+             ftp.login(user=FTP_USERNAME, passwd=FTP_PASSWORD) # Removed timeout from login
              print("FTP connection successful.")
 
              with zipfile.ZipFile(TEMP_ZIP_FILE_PATH, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zip_file: # Added allowZip64 for potentially large zips
                  # Start the recursive download from the REMOTE_FTP_ROOT
-                 ftp_recursive_download_and_zip(ftp, REMOTE_FTP_ROOT, zip_file)
+                 # Pass an empty string for base_zip_path initially for the root
+                 ftp_recursive_download_and_zip(ftp, REMOTE_FTP_ROOT, zip_file, "")
 
              print(f"FTP download and zipping complete. Zip saved to {TEMP_ZIP_FILE_PATH}")
 
