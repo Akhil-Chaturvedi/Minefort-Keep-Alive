@@ -7,14 +7,14 @@ const FTP_USERNAME = process.env.FTP_USERNAME; // Using FTP_USERNAME as the serv
 
 // --- Selectors ---
 const LOGIN_URL = 'https://minefort.com/login';
-const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${FTP_USERNAME}`;
+const SERVER_DASHBOARD_URL = `https://minefort.com/servers/${FTP_USERNAME}`; // Your specific server page URL
 
 const SELECTORS = {
   cookieDialog: '#CybotCookiebotDialog',
   cookieDeny: '#CybotCookiebotDialogBodyButtonDecline',
   email: 'input#email',
   password: 'input#password',
-  signIn: 'button:has-text("Sign In")', // Keep this selector
+  signIn: 'button:has-text("Sign In")',
   wakeUp: 'button:has-text("Wake up server")',
   startServer: 'button:has-text("Start server")'
 };
@@ -73,7 +73,6 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     await page.fill(SELECTORS.email, MINEFORT_EMAIL);
     await page.fill(SELECTORS.password, MINEFORT_PASSWORD);
 
-    // --- MODIFICATION START ---
     console.log('Attempting to log in by pressing Enter in the password field...');
     await page.locator(SELECTORS.password).press('Enter');
 
@@ -89,62 +88,70 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     } else {
         console.log('"Sign In" button is not visible after pressing Enter. Assuming navigation started.');
     }
+
+    // --- MODIFICATION START ---
+    console.log('Waiting for initial navigation after login attempt (expecting /servers)...');
+    let currentUrlAfterLogin = '';
+    try {
+        // Wait for the first navigation that should land on /servers
+        // Increased timeout slightly as login redirects can sometimes take longer
+        await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 45000 });
+        currentUrlAfterLogin = page.url();
+        console.log(`Initial navigation completed. Current URL is: ${currentUrlAfterLogin}`);
+    } catch (navError) {
+        currentUrlAfterLogin = page.url();
+         // If timeout occurred and we are on the servers page, we can potentially proceed.
+         // If still on login page, throw the error.
+         if (currentUrlAfterLogin.startsWith(LOGIN_URL)) {
+             const loginErrorElement = page.locator(LOGIN_ERROR_SELECTOR).first();
+             let loginErrorText = "No specific error message found on page after initial nav timeout.";
+              if (await loginErrorElement.isVisible({timeout: 1000}).catch(() => false)) {
+                 loginErrorText = await loginErrorElement.textContent({timeout:1000}) || "Error message element found but was empty.";
+             }
+             throw new Error(`Login failed: Still on login page after initial navigation timeout. Page might have shown an error: "${loginErrorText}". URL during navError: ${currentUrlAfterLogin}. Original navigation error: ${navError.message}`);
+         } else if (currentUrlAfterLogin.startsWith('https://minefort.com/servers')) {
+             console.warn(`Initial navigation timeout on servers list page (${currentUrlAfterLogin}), but proceeding as we might have reached the correct general area.`);
+         } else {
+            // Unexpected page after navigation attempt
+            throw new Error(`Login failed: Unexpected navigation error after login attempt. Current URL: ${currentUrlAfterLogin}. Original error: ${navError.message}`);
+         }
+    }
+
+
+    // Check if the initial navigation landed on the expected servers page or was an error
+    if (currentUrlAfterLogin.startsWith(LOGIN_URL)) {
+         const loginErrorElement = page.locator(LOGIN_ERROR_SELECTOR).first();
+        let loginErrorText = "No specific error message found on page after initial navigation completed (but still on login page).";
+         if (await loginErrorElement.isVisible({timeout: 2000}).catch(() => false)) {
+            loginErrorText = await loginErrorElement.textContent({timeout:1000}) || "Error message element found but was empty.";
+        }
+        throw new Error(`Login failed: Redirected back to or remained on login page after initial navigation. Page might have shown an error: "${loginErrorText}". URL after login attempt: ${currentUrlAfterLogin}`);
+    } else if (!currentUrlAfterLogin.startsWith('https://minefort.com/servers')) {
+         // If not on login page, but also not on the servers list page, something else is wrong
+         console.warn(`Unexpected initial landing page after login. Expected to land on /servers, but landed on: ${currentUrlAfterLogin}. Attempting to proceed to server dashboard anyway.`);
+    } else {
+         console.log(`Successfully reached the servers list page: ${currentUrlAfterLogin}`);
+    }
+
+    // Now, explicitly navigate to the specific server dashboard URL
+    console.log(`Navigating to specific server dashboard: ${SERVER_DASHBOARD_URL}`);
+    // Use goto and wait for it to load the specific server page
+    await page.goto(SERVER_DASHBOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }); // Increased timeout for server page load
+    console.log('Navigated to server dashboard.');
+
     // --- MODIFICATION END ---
 
 
-    console.log('Waiting for navigation to occur after login attempt...');
-    let navigatedUrlAfterLoginAttempt = '';
-    try {
-        // Wait for navigation to complete after pressing Enter or clicking Sign In
-        await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
-        navigatedUrlAfterLoginAttempt = page.url(); // Capture URL immediately
-        console.log(`Navigation completed. Current URL is: ${navigatedUrlAfterLoginAttempt}`);
-    } catch (navError) {
-        navigatedUrlAfterLoginAttempt = page.url(); // Capture URL even if navigation times out
-        console.error(`Timeout or error during page.waitForNavigation after login attempt. Current URL: ${navigatedUrlAfterLoginAttempt}`);
-        if (navigatedUrlAfterLoginAttempt.startsWith(LOGIN_URL)) {
-            const loginErrorElement = page.locator(LOGIN_ERROR_SELECTOR).first();
-            let loginErrorText = "No specific error message found on page (during navError).";
-            if (await loginErrorElement.isVisible({timeout: 1000}).catch(() => false)) { // Shorter timeout for error check
-                loginErrorText = await loginErrorElement.textContent({timeout:1000}) || "Error message element found but was empty.";
-            }
-            throw new Error(`Login failed: Still on login page after navigation timeout. Page might have shown an error: "${loginErrorText}". URL during navError: ${navigatedUrlAfterLoginAttempt}. Original navigation error: ${navError.message}`);
-        }
-        throw new Error(`Login failed: Navigation error after login attempt. Current URL: ${navigatedUrlAfterLoginAttempt}. Original error: ${navError.message}`);
-    }
-
-    // Check the captured URL after navigation attempt
-    if (navigatedUrlAfterLoginAttempt.startsWith(LOGIN_URL)) {
-        const loginErrorElement = page.locator(LOGIN_ERROR_SELECTOR).first();
-        let loginErrorText = "No specific error message found on page after navigation.";
-         if (await loginErrorElement.isVisible({timeout: 2000}).catch(() => false)) { // Slightly longer here as page should be 'stable'
-            loginErrorText = await loginErrorElement.textContent({timeout:1000}) || "Error message element found but was empty.";
-        }
-        throw new Error(`Login failed: Redirected back to or remained on login page. Page might have shown an error: "${loginErrorText}". URL after login attempt: ${navigatedUrlAfterLoginAttempt}`);
-    }
-
-    console.log(`Login appears successful. Navigated away from login page. Current URL: ${navigatedUrlAfterLoginAttempt}`);
-
-    // If login was successful and we are not on SERVER_DASHBOARD_URL, navigate there.
-    if (!navigatedUrlAfterLoginAttempt.startsWith(SERVER_DASHBOARD_URL)) {
-        console.log(`Current URL is not the server dashboard. Navigating to: ${SERVER_DASHBOARD_URL}`);
-        await page.goto(SERVER_DASHBOARD_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        console.log('Navigated to server dashboard.');
-    } else {
-        console.log('Already on the server dashboard or a subpage of it.');
-    }
-
-
     console.log('Waiting for server control buttons...');
-    await page.waitForSelector(`${SELECTORS.wakeUp}, ${SELECTORS.startServer}`, { timeout: 30000 });
+    await page.waitForSelector(`${SELECTORS.wakeUp}, ${SELECTORS.startServer}`, { timeout: 60000 }); // Increased timeout for buttons
     console.log('Server dashboard buttons found.');
 
     const wakeUpButton = page.locator(SELECTORS.wakeUp);
-    if (await wakeUpButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+    if (await wakeUpButton.isVisible({ timeout: 10000 }).catch(() => false)) { // Increased timeout for wake up check
       console.log('Server is sleeping. Clicking "Wake up server" button...');
       await wakeUpButton.click();
-      console.log('Clicked "Wake up server". Waiting 10 seconds for state change...');
-      await page.waitForTimeout(10000);
+      console.log('Clicked "Wake up server". Waiting 20 seconds for state change...'); // Increased wait
+      await page.waitForTimeout(20000);
       console.log('Finished waiting after Wake up.');
     } else {
       console.log('"Wake up server" button not visible. Assuming server is not sleeping or in a different state.');
@@ -152,13 +159,14 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
 
     const startServerButton = page.locator(SELECTORS.startServer);
     console.log('Looking for "Start server" button...');
-    await startServerButton.waitFor({ state: 'visible', timeout: 60000 });
+    // Wait for the start button to be visible, indicating the server is ready to be started
+    await startServerButton.waitFor({ state: 'visible', timeout: 120000 }); // Increased timeout significantly for server start readiness
 
     console.log('Clicking "Start server" button...');
     await startServerButton.click();
     console.log('Clicked "Start server".');
 
-    const finalServerStartWait = 10 * 1000;
+    const finalServerStartWait = 30 * 1000; // Increased wait
     console.log(`Clicked Start. Waiting ${finalServerStartWait / 1000} seconds for server to become ready...`);
     await page.waitForTimeout(finalServerStartWait);
     console.log('Finished waiting. Assuming server is ready for backup.');
