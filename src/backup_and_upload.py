@@ -22,10 +22,21 @@ BACKUP_REPO_URL = os.environ.get('BACKUP_REPO_URL') # e.g., https://github.com/y
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
 BACKUP_FOLDER_IN_REPO = 'backups' # Folder inside your GitHub repo to store zips
 
+# --- Items to Backup ---
+# Define the specific folders and files to include from the REMOTE_FTP_ROOT
+ITEMS_TO_BACKUP = [
+    "world",
+    "world_nether",
+    "world_the_end",
+    "usercache.json"
+]
+
 # --- Validation ---
 if not all([FTP_USERNAME, FTP_PASSWORD, BACKUP_REPO_URL, GITHUB_TOKEN]):
     print("Error: FTP_USERNAME, FTP_PASSWORD, BACKUP_REPO_URL, and GITHUB_TOKEN environment variables must be set.")
     sys.exit(1)
+if not ITEMS_TO_BACKUP:
+    print("Warning: ITEMS_TO_BACKUP list is empty. No files or folders will be backed up.")
 
 # --- Constants ---
 # Include time for uniqueness if needed, and ensure it's URL/filename safe
@@ -35,13 +46,17 @@ TEMP_REPO_DIR = 'temp_backup_repo' # Temporary directory to clone the backup rep
 TEMP_ZIP_FILE_PATH = f"/tmp/{BACKUP_ZIP_FILENAME}" # Temporary location to save the zip before git
 
 # --- FTP Download and Zip (using ftplib) ---
-def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_path=""):
-    """Recursively downloads files and directories from FTP to a zip file object."""
+def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_path="", items_filter=None):
+    """
+    Recursively downloads files and directories from FTP to a zip file object.
+    items_filter: A list of item names to include at the current level, or None to include all.
+    """
     print(f"Processing remote directory: {remote_dir}")
 
     # Ensure we are in the correct remote directory on the FTP server
-    original_cwd_before_entry = ftp_client.pwd() # Store CWD before attempting to change into remote_dir
+    original_cwd_before_entry = None # Store CWD before attempting to change into remote_dir
     try:
+        original_cwd_before_entry = ftp_client.pwd() # Get current CWD
         ftp_client.cwd(remote_dir)
         print(f"Successfully changed to directory: {ftp_client.pwd()}") # Verify CWD
     except ftplib.error_perm as e:
@@ -55,13 +70,13 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
     items = []
     try:
         items = ftp_client.nlst() # Get list of files and directories in current remote_dir
-        print(f"Items in {remote_dir}: {items}")
+        print(f"Items found in {remote_dir}: {items}")
     except ftplib.error_perm as e:
         print(f"Permission error listing contents of directory {remote_dir}: {e}")
         # Log error and return. Ensure we change back up if we successfully changed into remote_dir.
         try:
-            if ftp_client.pwd() != original_cwd_before_entry:
-                 ftp_client.cwd('..')
+            if original_cwd_before_entry is not None and ftp_client.pwd() != original_cwd_before_entry:
+                 ftp_client.cwd(original_cwd_before_entry)
                  print(f"Changed back to parent directory after list permission error.")
         except:
             pass
@@ -69,8 +84,8 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
     except Exception as e:
         print(f"Error listing contents of directory {remote_dir}: {e}")
         try:
-             if ftp_client.pwd() != original_cwd_before_entry:
-                 ftp_client.cwd('..')
+             if original_cwd_before_entry is not None and ftp_client.pwd() != original_cwd_before_entry:
+                 ftp_client.cwd(original_cwd_before_entry)
                  print(f"Changed back to parent directory after list error.")
         except:
             pass
@@ -84,11 +99,12 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
         if item in ('.', '..'):
             continue
 
-        # --- EXCLUSION LOGIC ---
-        if item == '.cache':
-             print(f"Skipping excluded item: {os.path.join(remote_dir, item)}")
-             continue
-        # --- END EXCLUSION LOGIC ---
+        # --- Filtering Logic ---
+        # If a filter is provided for this level, skip items not in the filter
+        if items_filter is not None and item not in items_filter:
+            print(f"Skipping item (not in filter): {item}")
+            continue
+        # --- End Filtering Logic ---
 
 
         # Construct the full remote path for the item
@@ -107,11 +123,12 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
              zip_path_in_zip = zip_path_in_zip[1:]
         if zip_path_in_zip.startswith('./'): # Clean up relative path start
              zip_path_in_zip = zip_path_in_zip[2:]
+        # Special case for the root directory itself
         if zip_path_in_zip == '.' and remote_dir == REMOTE_FTP_ROOT:
              zip_path_in_zip = "" # Handle root directory entry
 
 
-        print(f"Considering item: {item} (Remote: {full_remote_item_path}, Zip: {zip_path_in_zip})")
+        print(f"Considering item for backup: {item} (Remote: {full_remote_item_path}, Zip: {zip_path_in_zip})")
 
         is_directory = False
         original_cwd_before_check = ftp_client.pwd() # Store CWD before attempting to change into item
@@ -139,21 +156,23 @@ def ftp_recursive_download_and_zip(ftp_client, remote_dir, zip_file, base_zip_pa
             # Add directory entry to zip (important for empty dirs)
             # Ensure directory path in zip ends with a slash unless it's the root entry
             dir_zip_path = zip_path_in_zip
+            # Only add trailing slash if it's not empty (the root) and not already has one
             if dir_zip_path and not dir_zip_path.endswith('/'):
                 dir_zip_path += '/'
-            print(f"Adding directory entry to zip: {dir_zip_path if dir_zip_path else remote_dir}")
-            try:
-                # Add an empty string to signify a directory entry
-                # Only add if it's not the root directory entry itself
-                if dir_zip_path:
+            # Skip adding the root directory entry itself if base_zip_path was empty
+            if dir_zip_path:
+                print(f"Adding directory entry to zip: {dir_zip_path}")
+                try:
+                    # Add an empty string to signify a directory entry
                     zip_file.writestr(dir_zip_path, "")
-            except Exception as e:
-                 print(f"Warning: Error adding directory {dir_zip_path} entry to zip: {e}")
+                except Exception as e:
+                     print(f"Warning: Error adding directory {dir_zip_path} entry to zip: {e}")
 
             # Recurse into this directory
             # The recursive call will handle changing into the subdirectory
+            # Pass None for items_filter to include all contents within this directory
             # The base_zip_path for the recursive call is the zip_path_in_zip of the current directory
-            ftp_recursive_download_and_zip(ftp_client, full_remote_item_path, zip_file, zip_path_in_zip)
+            ftp_recursive_download_and_zip(ftp_client, full_remote_item_path, zip_file, zip_path_in_zip, items_filter=None)
 
             # After the recursive call returns, the FTP client's CWD should be the parent directory
             # of the directory we just processed (because the recursive call changes back up).
@@ -241,6 +260,7 @@ def add_and_commit_backup(repo_dir, backup_filepath):
                         print(f"Found old backup, attempting to remove: {old_file_path}")
                         try:
                             # Use git rm to remove the file and stage the deletion
+                            # Add --cached if you only want to remove from index, not working tree
                             subprocess.run(['git', 'rm', '-f', old_file_path], check=True)
                             print(f"Staged removal of {old_file_path}")
                         except subprocess.CalledProcessError as e:
@@ -337,8 +357,8 @@ if __name__ == "__main__":
 
              with zipfile.ZipFile(TEMP_ZIP_FILE_PATH, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zip_file: # Added allowZip64 for potentially large zips
                  # Start the recursive download from the REMOTE_FTP_ROOT
-                 # Pass an empty string for base_zip_path initially for the root
-                 ftp_recursive_download_and_zip(ftp, REMOTE_FTP_ROOT, zip_file, "")
+                 # Pass the ITEMS_TO_BACKUP list as the filter for the root level
+                 ftp_recursive_download_and_zip(ftp, REMOTE_FTP_ROOT, zip_file, "", items_filter=ITEMS_TO_BACKUP)
 
              print(f"FTP download and zipping complete. Zip saved to {TEMP_ZIP_FILE_PATH}")
 
