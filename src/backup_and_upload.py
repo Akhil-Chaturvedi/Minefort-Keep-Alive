@@ -230,11 +230,19 @@ def clone_backup_repo(repo_url, token, target_dir):
 
 
     try:
-        subprocess.run(['git', 'clone', repo_url_with_token, target_dir], check=True)
+        # Increased clone timeout
+        subprocess.run(['git', 'clone', repo_url_with_token, target_dir], check=True, timeout=180) # 3 minutes
         print("Repository cloned successfully.")
     except subprocess.CalledProcessError as e:
-        print(f"Error cloning repository: {e}")
+        print(f"Error cloning repository: {e.stderr.decode()}")
         sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print("Error: Git clone timed out.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"An unexpected error occurred during git clone: {e}")
+        sys.exit(1)
+
 
 def add_and_commit_backup(repo_dir, backup_filepath):
     """Adds, commits the new backup, and removes old ones."""
@@ -344,7 +352,7 @@ def add_and_commit_backup(repo_dir, backup_filepath):
             # With deleting old ones, standard push should work unless there are merge conflicts (unlikely in a dedicated backup repo)
             print(f"Pushing from branch {current_branch} to {push_url}")
             # Increased timeout for push
-            subprocess.run(['git', 'push', push_url, current_branch], check=True, timeout=180) # 3 minutes
+            subprocess.run(['git', 'push', push_url, current_branch], check=True, timeout=300) # 5 minutes
             print("Changes pushed successfully.")
         except subprocess.CalledProcessError as e:
             print(f"Error pushing changes: {e.stderr.decode()}")
@@ -368,14 +376,19 @@ def add_and_commit_backup(repo_dir, backup_filepath):
 async def async_ftp_process():
     """Asynchronous function to handle FTP connection, file collection, and parallel download."""
     print(f"Starting asynchronous FTP process...")
-    print(f"Connecting to FTP (aioftp): {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
     client = None
     remote_items_to_process = []
+
     try:
         # Connect to FTP using aioftp
-        # Set client-level timeout, applies to connect, login, and commands
-        client = aioftp.Client(timeout=180) # 3 minutes
-        await client.connect(FTP_HOST, FTP_PORT)
+        # Set client-level timeout for FTP commands *after* connection
+        client = aioftp.Client(timeout=180) # 3 minutes for commands
+
+        print(f"Connecting to FTP (aioftp): {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
+        # Use asyncio.wait_for to set a specific timeout for the connection attempt itself
+        # Increased connection timeout slightly
+        await asyncio.wait_for(client.connect(FTP_HOST, FTP_PORT), timeout=90) # Set connection timeout (e.g., 90 seconds)
+
         await client.login(FTP_USERNAME, FTP_PASSWORD)
         print("FTP connection successful (aioftp).")
 
@@ -421,7 +434,7 @@ async def async_ftp_process():
                  file_progress=True,
                  initial_transfer_size=1024*1024, # 1MB initial chunk size
                  connect_timeout=60, # Timeout for establishing each download connection
-                 timeout=180 # Total timeout for each individual file download
+                 timeout=300 # Total timeout for each individual file download (Increased)
              )
 
 
@@ -495,12 +508,26 @@ async def async_ftp_process():
 
         return True # Indicate backup was successful
 
+    except asyncio.TimeoutError:
+        # Handle timeout specifically for the initial connection
+        print(f"Error: Initial FTP connection to {FTP_HOST}:{FTP_PORT} timed out.")
+        # Clean up temporary local download directory on failure
+        if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
+            print(f"Cleaning up temporary local download directory after error: {TEMP_LOCAL_DOWNLOAD_DIR}")
+            shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
+        # Ensure client is closed if it was created before the error
+        if client and not client.closed:
+             await client.close()
+        raise # Re-raise the timeout error to be caught by the main try/except
     except Exception as e:
         print(f"Failed during asynchronous FTP process: {e}")
          # Clean up the temporary local download directory on failure
         if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
             print(f"Cleaning up temporary local download directory after error: {TEMP_LOCAL_DOWNLOAD_DIR}")
             shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
+        # Ensure client is closed if it was created before the error
+        if client and not client.closed:
+             await client.close()
         # Re-raise the exception to be caught by the main try/except
         raise
 
