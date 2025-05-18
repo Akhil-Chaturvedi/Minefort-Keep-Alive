@@ -648,7 +648,7 @@ if __name__ == "__main__":
         print(f"Overall FTP download and zipping process failed: {e}")
         # The async function should handle cleanup of local download dir, but a final zip check doesn't hurt
         if os.path.exists(TEMP_ZIP_FILE_PATH):
-             print(f"Cleaning up temporary zip file after overall failure: {TEMP_ZIP_FILE_PATH}")
+             print(f"Cleaning up temporary zip file after overall failure: {TEMP_ZIP_FILE_DIR}") # Corrected typo here
              os.remove(TEMP_ZIP_FILE_PATH)
         sys.exit(1)
 
