@@ -229,11 +229,10 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     // Create new backup
     console.log('Clicking "Create backup" button... ');
     const createBackupButton = page.locator(SELECTORS.createBackupButton);
-    // Explicit waits for the button state before clicking
-    console.log('Waiting for Create backup button to be visible, enabled, and stable...');
+    // Explicit waits for the button state before clicking - Corrected states
+    console.log('Waiting for Create backup button to be visible...');
     await createBackupButton.waitFor({ state: 'visible', timeout: 30000 });
-    await createBackupButton.waitFor({ state: 'enabled', timeout: 30000 });
-    await createBackupButton.waitFor({ state: 'stable', timeout: 30000 });
+    // The .click() method automatically waits for enabled and stable
     await createBackupButton.click();
     console.log('Clicked "Create backup".');
 
