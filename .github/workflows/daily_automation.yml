@@ -24,7 +24,6 @@ jobs:
 
       - name: Install Node.js dependencies (including Playwright)
         run: npm install
-        # Assuming package.json is in the repository root
         working-directory: .
 
       - name: Install Playwright Browsers
@@ -33,22 +32,29 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          # Use a specific Python version if needed, '3.x' is fine for latest
           python-version: '3.x'
-          # Cache pip dependencies to speed up builds
           cache: 'pip'
+
+      # --- Debugging Steps ---
+      - name: Show requirements.txt content
+        run: cat requirements.txt
+        working-directory: .
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt
-        # Assuming requirements.txt is in the repository root
         working-directory: .
+
+      - name: Show installed parfive version
+        run: pip show parfive
+        # No working-directory needed if pip is in PATH
+      # --- End Debugging Steps ---
+
 
       - name: Run Playwright Server Starter
         run: node src/start_server_playwright.js
         env:
           MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
           MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
-          # Assuming FTP_USERNAME is used by the Playwright script for the server ID
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
 
       - name: Upload error screenshot if login fails
@@ -56,17 +62,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-error
-          path: playwright_error.png # Assuming the screenshot is saved in the root or specified path
+          path: playwright_error.png
           if-no-files-found: ignore
 
       - name: Run Backup and Upload Script
         run: python src/backup_and_upload.py
         env:
-          FTP_HOST: ${{ secrets.FTP_HOST }} # Include if host is a secret
-          FTP_PORT: ${{ secrets.FTP_PORT }} # Include if port is a secret
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REMOTE_FTP_ROOT: ${{ secrets.REMOTE_FTP_ROOT }} # Include if root is a secret
-          BACKUP_FOLDER_IN_REPO: ${{ secrets.BACKUP_FOLDER_IN_REPO }} # Include if backup folder is a secret
+          REMOTE_FTP_ROOT: ${{ secrets.REMOTE_FTP_ROOT }}
+          BACKUP_FOLDER_IN_REPO: ${{ secrets.BACKUP_FOLDER_IN_REPO }}
