@@ -33,9 +33,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-          # cache: 'pip' # Removed this line
+          # cache: 'pip' # This should already be removed from the last attempt
 
       # --- Debugging Steps (Keep these for now) ---
+      - name: Show Python Location
+        run: echo "Python location: ${{ env.pythonLocation }}"
+
       - name: Show requirements.txt content
         run: cat requirements.txt
         working-directory: .
@@ -46,7 +49,6 @@ jobs:
 
       - name: Show installed parfive version
         run: pip show parfive
-        # No working-directory needed if pip is in PATH
       # --- End Debugging Steps ---
 
 
@@ -66,7 +68,8 @@ jobs:
           if-no-files-found: ignore
 
       - name: Run Backup and Upload Script
-        run: python src/backup_and_upload.py
+        # Explicitly use the Python executable path from setup-python
+        run: ${{ env.pythonLocation }}/bin/python src/backup_and_upload.py
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_PORT: ${{ secrets.FTP_PORT }}
