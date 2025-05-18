@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write
+      contents: write # Needed to push to the backup repository
 
     steps:
       - name: Checkout code
@@ -33,9 +33,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-          # Ensure cache: 'pip' is removed from here
+          # Ensure cache: 'pip' is removed from here if you removed it previously
 
-      # Ensure dependencies are installed
+      # Ensure Python dependencies are installed (only manage_git_backup needs them now)
       - name: Install Python dependencies
         run: pip install -r requirements.txt
         working-directory: .
@@ -51,37 +51,30 @@ jobs:
       # --- End Debugging Steps ---
 
 
-      - name: Run Playwright Server Starter
+      - name: Run Playwright Server Automation (Wake & Backup)
+        id: playwright_run # Add an ID to this step to access its outputs
         run: node src/start_server_playwright.js
         env:
           MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
           MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }} # This is also the server ID
 
-      # --- Add or adjust the delay here ---
-      - name: Wait for server to wake up
-        run: sleep 60 # Increased delay to 1 minutes (adjust as needed)
-      # --- End delay ---
+      # No explicit sleep needed here if Playwright waits for backup creation/download
 
-
-      - name: Upload error screenshot if login fails
-        if: failure()
+      - name: Upload error screenshot if playwright fails
+        if: steps.playwright_run.conclusion == 'failure' # Check if the playwright step failed
         uses: actions/upload-artifact@v4
         with:
           name: playwright-error
-          path: playwright_error.png
+          path: playwright_error.png # Assuming playwright_error.png is still the path
           if-no-files-found: ignore
 
-      - name: Run Backup and Upload Script
-        # Use explicit Python path if that helped before
-        run: ${{ env.pythonLocation }}/bin/python src/backup_and_upload.py
+      # --- Add the new Python step ---
+      - name: Run Git Backup Manager # New step
+        # Pass the downloaded file path from the playwright step's output
+        run: ${{ env.pythonLocation }}/bin/python src/manage_git_backup.py ${{ steps.playwright_run.outputs.downloaded_file_path }}
         env:
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_PORT: ${{ secrets.FTP_PORT }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REMOTE_FTP_ROOT: ${{ secrets.REMOTE_FTP_ROOT }}
           BACKUP_FOLDER_IN_REPO: ${{ secrets.BACKUP_FOLDER_IN_REPO }}
-Updated daily_automation.yml · Akhil-Chaturvedi/Minefort-Backup@4ce43ad
+      # --- End new Python step ---
