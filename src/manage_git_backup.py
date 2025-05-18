@@ -62,7 +62,7 @@ def clone_backup_repo(repo_url, token, target_dir):
         print(f"Cloning URL: {repo_url_with_token.replace(quote_plus(token), '***')}") # Mask token in logs
 
     except ValueError as ve:
-         print(f"Error embedding token in repo URL: {ve}")
+         print(f"Error embedding token in push URL: {ve}")
          sys.exit(1)
     except Exception as e:
          print(f"An unexpected error occurred during repo URL construction: {e}")
