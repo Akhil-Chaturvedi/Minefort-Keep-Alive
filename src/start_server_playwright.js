@@ -24,17 +24,15 @@ const SELECTORS = {
   startServer: 'button:has-text("Start server")',
 
   // --- Backup Page Selectors ---
-  // Selector for the 'Create backup' button based on the provided HTML
-  createBackupButton: 'button:has-text("Create backup")',
-  // Refined Selector for the download SVG icon based on HTML structure and position
-  // It's the first SVG within the actions <td> with specific classes
-  downloadBackupIcon: 'td.flex.justify-end.space-x-4 svg.w-6.cursor-pointer:first-of-type',
-  // Refined Selector for the delete SVG icon based on HTML structure and position
-  // It's the third SVG within the actions <td> with specific classes
-  deleteBackupIcon: 'td.flex.justify-end.space-x-4 svg.w-6.cursor-pointer:nth-of-type(3)',
+  // Selector for the 'Create backup' button based on the provided HTML and recording
+  createBackupButton: 'button:has-text("Create backup")', // Recording also suggests 'aria/Create backup' and 'text/Create backup' which this covers
+  // Refined Selector for the download SVG icon based on recording output
+  downloadBackupIcon: 'td.flex > svg:nth-of-type(1)', // Recording suggests 'td.flex > svg:nth-of-type(1)'
+  // Refined Selector for the delete SVG icon based on recording output and HTML
+  deleteBackupIcon: 'td.flex > svg:nth-of-type(3)', // Recording suggests 'svg:nth-of-type(3)' within td.flex
 
-  // Selector for the delete confirmation button based on provided HTML
-  confirmDeleteButton: 'button:has-text("Confirm")',
+  // Selector for the delete confirmation button based on provided HTML and recording
+  confirmDeleteButton: 'button:has-text("Confirm")', // Recording also suggests 'aria/Confirm' and 'text/Confirm' which this covers
 
 
   // Selector for a loading spinner or status text after creating backup
@@ -91,7 +89,7 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
             if (await cookieDialogElement.isHidden({timeout: 2000})) {
                 console.log('Dialog hidden after pressing Escape.');
             } else {
-                console.warn('Escape key did not hide the cookie dialog.');
+                console.warn(`Escape key did not hide the cookie dialog: ${error.name} - ${error.message}. Attempting to proceed.`);
             }
         } else {
             console.warn(`Warning during cookie dialog handling: ${error.name} - ${error.message}. Attempting to proceed.`);
@@ -226,22 +224,24 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
 
 
     // Create new backup
-    console.log('Clicking "Create backup" button...');
+    console.log('Clicking "Create backup" button... ');
     const createBackupButton = page.locator(SELECTORS.createBackupButton);
+    // Explicit waits for the button state before clicking
+    console.log('Waiting for Create backup button to be visible, enabled, and stable...');
     await createBackupButton.waitFor({ state: 'visible', timeout: 30000 });
+    await createBackupButton.waitFor({ state: 'enabled', timeout: 30000 });
+    await createBackupButton.waitFor({ state: 'stable', timeout: 30000 });
     await createBackupButton.click();
     console.log('Clicked "Create backup".');
 
-    // Wait for backup creation to complete.
-    // Adjusted initial wait based on observation.
-    const backupCreationInitialWait = 20 * 1000; // Wait 20 seconds initially
-    console.log(`Waiting ${backupCreationInitialWait / 1000} seconds for backup creation...`);
-    await page.waitForTimeout(backupCreationInitialWait);
+    // Add a wait for a potential "creating" indicator or simply a buffer
+    console.log('Waiting for a brief moment after clicking create before looking for download button...');
+    await page.waitForTimeout(10000); // Wait 10 seconds buffer
 
 
-    // Now, attempt to find and click the download button, letting click wait for visibility.
+    // Now, attempt to find and click the download button, letting click wait for visibility/interactivity.
     console.log('Attempting to find and download the new backup by clicking the download icon...');
-    // Use the refined download button selector based on position
+    // Use the refined download button selector based on recording output
     const downloadButton = page.locator(SELECTORS.downloadBackupIcon).first();
 
 
