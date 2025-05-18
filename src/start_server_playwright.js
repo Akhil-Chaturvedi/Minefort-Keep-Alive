@@ -26,31 +26,23 @@ const SELECTORS = {
   // --- Backup Page Selectors ---
   // Selector for the 'Create backup' button based on the provided HTML
   createBackupButton: 'button:has-text("Create backup")',
-  // Selector for the download SVG icon. This might need refinement.
-  // Assuming it's an SVG with these classes and data-slot="icon"
-  // To make it more robust, you might need to find a parent element that
-  // uniquely identifies a backup entry (e.g., a list item or table row)
-  // and then find the SVG within that parent. For now, using a general selector.
-  downloadBackupIcon: 'svg.w-6.cursor-pointer[data-slot="icon"]',
-  // Selector for the delete SVG icon. This also needs refinement.
-  // Assuming it's another SVG with similar classes. You might need to
-  // differentiate it from the download icon by its position or other attributes.
-  // Placeholder selector - YOU WILL LIKELY NEED TO UPDATE THIS
-  deleteBackupIcon: 'svg.w-6.cursor-pointer[data-slot="icon"]', // This is the same as download - NEEDS REFINEMENT!
-  // If delete is the second such icon in a list item, you could try:
-  // deleteBackupIcon: '.backup-entry-selector >> svg.w-6.cursor-pointer[data-slot="icon"]:nth-of-type(2)',
-  // You might need to inspect the actual HTML structure of a backup entry.
-  // For now, I'll use a simple selector and add a comment.
-  deleteBackupButton: 'button[aria-label="Delete backup"]', // Common pattern for icon buttons
-  // If there's a confirmation dialog for deletion, add selectors here
-  confirmDeleteButton: 'button:has-text("Delete")', // Placeholder for a confirmation button text
+  // Selector for the download SVG icon based on HTML structure and path data
+  // It's the first SVG within the actions <td> with a specific path
+  downloadBackupIcon: 'td.flex.justify-end.space-x-4 svg.w-6.cursor-pointer[data-slot="icon"][d*="M10.75 2.75a.75.75 0 0 0-1.5 0v8.614L6.295 8.235a.75.75 0 1 0-1.09 1.03l4.25 4.5a.75.75 0 0 0 1.09 0l4.25-4.5a.75.75 0 0 0-1.09-1.03l-2.955 3.129V2.75Z"]',
+  // Selector for the delete SVG icon based on HTML structure and path data
+  // It's the third SVG within the actions <td> with a specific path
+  deleteBackupIcon: 'td.flex.justify-end.space-x-4 svg.w-6.cursor-pointer[data-slot="icon"][d*="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"]',
+
+  // Assuming a confirmation dialog with a "Delete" button text
+  confirmDeleteButton: 'button:has-text("Delete")',
 
 
   // Selector for a loading spinner or status text after creating backup
+  // You might need to adjust these based on actual UI elements
   backupCreationLoading: 'div:has-text("Creating backup...")', // Placeholder
   backupCreationSuccess: 'div:has-text("Backup created successfully")', // Placeholder
-  // Selector for a list item or container for a single backup entry
-  backupEntry: 'div[role="listitem"]', // Common pattern, might need adjustment
+  // Selector for a single backup entry row
+  backupEntry: 'tbody.divide-y.divide-minefort-800 tr', // Target the table row within the tbody
 };
 
 // IMPORTANT: Update this selector if you find a specific error message on playwright_error.png
@@ -188,6 +180,10 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     await startServerButton.click();
     console.log('Clicked "Start server".');
 
+    // --- Removed the 120-second wait after clicking Start ---
+    // The script will now proceed directly to the backups page after clicking Start.
+
+
     // --- Backup Process ---
     console.log(`Navigating to server backups page: ${SERVER_BACKUPS_URL}`);
     await page.goto(SERVER_BACKUPS_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -195,7 +191,8 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
 
     // Delete existing backup (assuming only one can exist via dashboard)
     console.log('Attempting to delete existing backup...');
-    const deleteButton = page.locator(SELECTORS.deleteBackupButton).first(); // Target the first delete button found
+    // Use the refined delete button selector
+    const deleteButton = page.locator(SELECTORS.deleteBackupIcon).first();
     if (await deleteButton.isVisible({ timeout: 10000 }).catch(() => false)) {
         console.log('Existing backup found. Clicking delete button...');
         await deleteButton.click();
@@ -207,7 +204,7 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
             console.log('Delete confirmation dialog appeared. Clicking confirm...');
             await confirmDeleteButton.click();
             console.log('Clicked confirm delete.');
-            // Wait for the backup entry to disappear
+            // Wait for the backup entry (or its delete button) to disappear
             await deleteButton.waitFor({ state: 'hidden', timeout: 30000 }); // Wait for the delete button to disappear
             console.log('Existing backup deleted.');
         } else {
@@ -229,25 +226,25 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     console.log('Clicked "Create backup".');
 
     // Wait for backup creation to complete.
-    // This is a critical step and 10 seconds might not be enough for large servers.
-    // A more robust approach would be to wait for a status indicator to change
-    // or the download button for the new backup to become visible.
-    console.log('Waiting 10 seconds for backup creation (adjust this duration if needed)...');
-    await page.waitForTimeout(10000); // Initial wait as requested
+    // Increased the initial wait and the wait for the download button.
+    const backupCreationInitialWait = 60 * 1000; // Wait 60 seconds initially
+    console.log(`Waiting ${backupCreationInitialWait / 1000} seconds for backup creation...`);
+    await page.waitForTimeout(backupCreationInitialWait);
 
-    // Optional: Add a more robust wait here, e.g., wait for download button to appear
-    // console.log('Waiting for download button to appear for the new backup...');
-    // await page.waitForSelector(SELECTORS.downloadBackupIcon, { state: 'visible', timeout: 180000 }); // Wait up to 3 minutes for download icon
-    // console.log('Download button appeared.');
+
+    // Now, wait for the download button to appear with a longer timeout.
+    console.log('Waiting for download button to appear for the new backup...');
+    // Use the refined download button selector
+    await page.waitForSelector(SELECTORS.downloadBackupIcon, { state: 'visible', timeout: 300000 }); // Wait up to 5 minutes for download icon
+    console.log('Download button appeared.');
 
 
     // Download the new backup
     console.log('Attempting to find and download the new backup...');
-    // Assuming the new backup's download icon is now visible.
-    // If multiple backups exist, you might need to target the first one in the list
-    // or identify the new one uniquely. Using .first() as a simple approach.
+    // Use the refined download button selector
     const downloadButton = page.locator(SELECTORS.downloadBackupIcon).first();
-    await downloadButton.waitFor({ state: 'visible', timeout: 60000 }); // Wait for download button to be visible
+    // No extra waitFor needed here as we just waited for it above
+
 
     console.log('Download button found. Setting up download listener...');
     const [download] = await Promise.all([
@@ -266,12 +263,8 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
 
     // Delete the backup from the dashboard after downloading
     console.log('Attempting to delete the backup from the dashboard after download...');
-    // The delete button for the backup we just downloaded should now be visible again
-    // (or still visible if deletion happens after download).
-    // Target the delete button associated with the downloaded file.
-    // This might require finding the backup entry element again.
-    // For simplicity, let's assume the delete button for the most recent backup is now targetable.
-    const deleteButtonAfterDownload = page.locator(SELECTORS.deleteBackupButton).first(); // Target the first delete button again
+    // Use the refined delete button selector again
+    const deleteButtonAfterDownload = page.locator(SELECTORS.deleteBackupIcon).first();
      if (await deleteButtonAfterDownload.isVisible({ timeout: 10000 }).catch(() => false)) {
          console.log('Delete button found after download. Clicking delete...');
          await deleteButtonAfterDownload.click();
