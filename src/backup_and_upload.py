@@ -499,11 +499,7 @@ async def async_ftp_process():
              # initial_transfer_size: Initial chunk size for downloads
              # connect_timeout and timeout are also important for parfive downloads
              dl = parfive.Downloader(
-                 max_connections=5, # Can increase this for more parallelism
                  file_progress=True,
-                 initial_transfer_size=1024*1024, # 1MB initial chunk size
-                 connect_timeout=60, # Timeout for establishing each download connection
-                 timeout=300 # Total timeout for each individual file download (Increased)
              )
 
 
