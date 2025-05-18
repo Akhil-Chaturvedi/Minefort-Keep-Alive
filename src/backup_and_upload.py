@@ -352,7 +352,7 @@ def add_and_commit_backup(repo_dir, backup_filepath):
 
         # Commit changes
         # Check if there are any staged changes before committing
-        status_output = subprocess.run(['git', 'status', '--portuguese'], capture_output=True, text=True, check=True).stdout.strip() # Corrected typo here - should be '--porcelain'
+        status_output = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, check=True).stdout.strip()
         if status_output:
             commit_message = f"Automated backup: {os.path.basename(backup_filepath)}"
             print(f"Committing with message: '{commit_message}'")
