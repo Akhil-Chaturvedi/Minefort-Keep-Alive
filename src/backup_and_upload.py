@@ -527,7 +527,7 @@ async def async_ftp_process():
 
              # Perform the parallel download
              print("Executing parallel download...")
-             download_results = await dl.download()
+             download_results = dl.download()
 
              if download_results.errors:
                  print("\nErrors occurred during parallel download:")
