@@ -188,14 +188,6 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     await startServerButton.click();
     console.log('Clicked "Start server".');
 
-    // Wait for the server to fully start. This might need adjustment.
-    // A more robust way would be to wait for a specific status indicator on the dashboard.
-    const serverStartupWait = 120 * 1000; // Wait 2 minutes after clicking start as a general buffer
-    console.log(`Clicked Start. Waiting ${serverStartupWait / 1000} seconds for server state to update...`);
-    await page.waitForTimeout(serverStartupWait);
-    console.log('Finished waiting after Start.');
-
-
     // --- Backup Process ---
     console.log(`Navigating to server backups page: ${SERVER_BACKUPS_URL}`);
     await page.goto(SERVER_BACKUPS_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
