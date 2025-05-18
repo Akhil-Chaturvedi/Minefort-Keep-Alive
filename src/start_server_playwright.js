@@ -178,8 +178,11 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
     await startServerButton.click();
     console.log('Clicked "Start server".');
 
-    // --- Removed the 120-second wait after clicking Start ---
-    // The script will now proceed directly to the backups page after clicking Start.
+    // --- ADDED wait for server startup ---
+    console.log('Waiting 60 seconds for server to start up...');
+    await page.waitForTimeout(60000); // Wait 1 minute for server to finish starting
+    console.log('Server startup wait finished. Proceeding to backups page.');
+    // --- END ADDED wait ---
 
 
     // --- Backup Process ---
@@ -189,7 +192,7 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
 
     // Delete existing backup (assuming only one can exist via dashboard)
     console.log('Attempting to delete existing backup...');
-    // Use the refined delete button selector based on position
+    // Use the refined delete button selector based on position from recording
     const deleteButton = page.locator(SELECTORS.deleteBackupIcon).first();
     try {
         console.log('Attempting to click delete button for existing backup...');
@@ -217,7 +220,7 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
         if (deleteError.name === 'TimeoutError') {
             console.log('No existing backup found to delete (delete button not visible within timeout).');
         } else {
-            console.warn(`Warning during initial delete attempt: ${deleteError.name} - ${deleteError.message}`);
+            console.warn(`Warning during initial delete attempt: ${deleteError.name} - ${deleteError.message}. Re-throwing.`);
             throw deleteError; // Re-throw other errors
         }
     }
@@ -289,7 +292,7 @@ const LOGIN_ERROR_SELECTOR = 'div[class*="text-red-500"], p[role="alert"], .logi
          if (deleteError.name === 'TimeoutError') {
             console.log('Could not find delete button for backup after download (button not visible within timeout).');
          } else {
-            console.warn(`Warning during delete after download attempt: ${deleteError.name} - ${deleteError.message}`);
+            console.warn(`Warning during delete after download attempt: ${deleteError.name} - ${deleteError.message}. Re-throwing.`);
             throw deleteError; // Re-throw other errors
          }
      }
