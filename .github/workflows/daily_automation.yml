@@ -33,21 +33,23 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-          # Ensure cache: 'pip' is removed from here
+          # Ensure cache: 'pip' is removed from here if you removed it previously
 
       # Ensure dependencies are installed
       - name: Install Python dependencies
         run: pip install -r requirements.txt
         working-directory: .
 
-      # --- Debugging Steps (Optional, you can keep or remove) ---
-      # - name: Show Python Location
-      #   run: echo "Python location: ${{ env.pythonLocation }}"
-      # - name: Show requirements.txt content
-      #   run: cat requirements.txt
-      #   working-directory: .
-      # - name: Show installed parfive version
-      #   run: pip show parfive
+      # --- Debugging Steps (Keep these to help diagnose environment) ---
+      - name: Show Python Location
+        run: echo "Python location: ${{ env.pythonLocation }}"
+
+      - name: Show requirements.txt content
+        run: cat requirements.txt
+        working-directory: .
+
+      - name: Show installed parfive version
+        run: pip show parfive
       # --- End Debugging Steps ---
 
 
@@ -58,10 +60,7 @@ jobs:
           MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
 
-      # --- Add or adjust the delay here ---
-      - name: Wait for server to wake up
-        run: sleep 60 # Increased delay to 1 minutes (adjust as needed)
-      # --- End delay ---
+      # --- Removed the 'Wait for server to wake up' step ---
 
 
       - name: Upload error screenshot if login fails
