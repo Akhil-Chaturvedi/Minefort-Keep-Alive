@@ -1,81 +1,73 @@
 name: Daily Minefort Keep-Alive and Backup
 
-on:
-  schedule:
-    # Run every day at 03:00 UTC (adjust time as needed)
-    - cron: '0 3 * * *'
-  workflow_dispatch:
+on: schedule: # Run every day at 03:00 UTC (adjust time as needed) - cron: '0 3 * * *' workflow_dispatch:
 
-jobs:
-  automate:
-    runs-on: ubuntu-latest
+jobs: automate: runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
+permissions:
+  contents: write
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+steps:
+  - name: Checkout code
+    uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+  - name: Set up Node.js
+    uses: actions/setup-node@v4
+    with:
+      node-version: '20'
 
-      - name: Install Node.js dependencies (including Playwright)
-        run: npm install
-        working-directory: .
+  - name: Install Node.js dependencies (including Playwright)
+    run: npm install
+    working-directory: .
 
-      - name: Install Playwright Browsers
-        run: npx playwright install --with-deps
+  - name: Install Playwright Browsers
+    run: npx playwright install --with-deps
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-          # cache: 'pip' # This should already be removed from the last attempt
+  - name: Set up Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: '3.x'
 
-      # --- Debugging Steps (Keep these for now) ---
-      - name: Show Python Location
-        run: echo "Python location: ${{ env.pythonLocation }}"
+  # --- Debugging Steps (Keep these for now) ---
+  - name: Show Python Location
+    run: echo "Python location: ${{ env.pythonLocation }}"
 
-      - name: Show requirements.txt content
-        run: cat requirements.txt
-        working-directory: .
+  - name: Show requirements.txt content
+    run: cat requirements.txt
+    working-directory: .
 
-      - name: Install Python dependencies
-        run: pip install -r requirements.txt
-        working-directory: .
+  - name: Install Python dependencies
+    run: pip install -r requirements.txt
+    working-directory: .
 
-      - name: Show installed parfive version
-        run: pip show parfive
-      # --- End Debugging Steps ---
+  - name: Show installed parfive version
+    run: pip show parfive
+  # --- End Debugging Steps ---
 
+  - name: Run Playwright Server Starter
+    run: node src/start_server_playwright.js
+    env:
+      MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
+      MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
+      FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
 
-      - name: Run Playwright Server Starter
-        run: node src/start_server_playwright.js
-        env:
-          MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
-          MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+  - name: Upload error screenshot if login fails
+    if: failure()
+    uses: actions/upload-artifact@v4
+    with:
+      name: playwright-error
+      path: playwright_error.png
+      if-no-files-found: ignore
 
-      - name: Upload error screenshot if login fails
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-error
-          path: playwright_error.png
-          if-no-files-found: ignore
+  - name: Run Backup and Upload Script
+    run: ${{ env.pythonLocation }}/bin/python src/backup_and_upload.py
+    env:
+      FTP_HOST: ${{ secrets.FTP_HOST }}
+      FTP_PORT: ${{ secrets.FTP_PORT }}
+      FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+      FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+      BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REMOTE_FTP_ROOT: ${{ secrets.REMOTE_FTP_ROOT }}
+      BACKUP_FOLDER_IN_REPO: ${{ secrets.BACKUP_FOLDER_IN_REPO }}
 
-      - name: Run Backup and Upload Script
-        # Explicitly use the Python executable path from setup-python
-        run: ${{ env.pythonLocation }}/bin/python src/backup_and_upload.py
-        env:
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_PORT: ${{ secrets.FTP_PORT }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-          BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REMOTE_FTP_ROOT: ${{ secrets.REMOTE_FTP_ROOT }}
-          BACKUP_FOLDER_IN_REPO: ${{ secrets.BACKUP_FOLDER_IN_REPO }}
