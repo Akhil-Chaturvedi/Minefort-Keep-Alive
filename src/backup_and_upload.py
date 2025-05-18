@@ -206,7 +206,7 @@ def setup_git_credentials():
         subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Actions'], check=True)
         print("Git user configured.")
     except subprocess.CalledProcessError as e:
-        print(f"Error configuring git user: {e}")
+        print(f"Error configuring git user: {e.stderr.decode()}")
         sys.exit(1)
 
 
@@ -218,15 +218,28 @@ def clone_backup_repo(repo_url, token, target_dir):
     try:
         from urllib.parse import urlparse, urlunparse
         parsed_url = urlparse(repo_url)
+        # Ensure we handle cases where hostname might be empty or other issues
+        if not parsed_url.hostname:
+             raise ValueError("Could not parse hostname from remote URL for token embedding.")
+
         netloc_with_token = f'oauth2:{token}@{parsed_url.hostname}'
         if parsed_url.port:
              netloc_with_token += f':{parsed_url.port}'
         repo_url_with_token = urlunparse(parsed_url._replace(netloc=netloc_with_token))
+        print(f"Cloning URL: {repo_url_with_token.replace(token, '***')}") # Mask token in logs
+
 
     except ImportError:
         print("Warning: urllib.parse not available, unable to robustly embed token in repo URL. Proceeding with simpler replacement.")
         repo_url_with_token = repo_url.replace('https://github.com/', f'https://oauth2:{token}@github.com/', 1)
         repo_url_with_token = repo_url_with_token.replace('http://github.com/', f'http://oauth2:{token}@github.com/', 1)
+        print(f"Cloning URL: {repo_url_with_token.replace(token, '***')}") # Mask token in logs
+    except ValueError as ve:
+         print(f"Error embedding token in repo URL: {ve}")
+         sys.exit(1)
+    except Exception as e:
+         print(f"An unexpected error occurred during repo URL construction: {e}")
+         sys.exit(1)
 
 
     try:
@@ -325,7 +338,7 @@ def add_and_commit_backup(repo_dir, backup_filepath):
             # Get the current remote URL from the cloned repo config
             remote_name = subprocess.run(['git', 'remote'], capture_output=True, text=True, check=True).stdout.strip()
             if not remote_name:
-                 print("Error: Could not determine git remote name name.") # Corrected typo
+                 print("Error: Could not determine git remote name.")
                  sys.exit(1)
             # Get the URL for the 'origin' remote (or the detected remote_name)
             original_remote_url = subprocess.run(['git', 'remote', 'get-url', remote_name], capture_output=True, text=True, check=True).stdout.strip()
@@ -334,7 +347,7 @@ def add_and_commit_backup(repo_dir, backup_filepath):
             try:
                 from urllib.parse import urlparse, urlunparse
                 parsed_url = urlparse(original_remote_url)
-                # Ensure we handle cases where hostname might be empty or other issues
+                 # Ensure we handle cases where hostname might be empty or other issues
                 if not parsed_url.hostname:
                      raise ValueError("Could not parse hostname from remote URL for token embedding.")
 
@@ -411,11 +424,14 @@ async def async_ftp_process():
         # Close connection after collecting paths
         # It's generally better to close connections you are done with,
         # parfive will open its own connections for downloading.
-        if client and client.is_connected(): # Check if client is connected before closing
-            await client.close()
-            print("Closed aioftp client connection after collecting items.")
+        if client: # Check if client object was created
+            try:
+                await client.close()
+                print("Closed aioftp client connection after collecting items.")
+            except Exception as close_err:
+                print(f"Warning: Error closing aioftp client after collection: {close_err}")
         else:
-            print("aioftp client not connected after collecting items (already closed or failed earlier).")
+            print("aioftp client was not created or already handled before collection.")
 
 
         # Filter out directory markers, only keep file paths for downloading
@@ -530,9 +546,13 @@ async def async_ftp_process():
         if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
             print(f"Cleaning up temporary local download directory after error: {TEMP_LOCAL_DOWNLOAD_DIR}")
             shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
-        # Ensure client is closed if it was created before the error and is connected
-        if client and client.is_connected():
-             await client.close()
+        # Ensure client is closed if it was created before the error
+        if client: # Check if client object was created
+             try:
+                 await client.close()
+                 print("Attempted to close aioftp client after timeout.")
+             except Exception as close_err:
+                 print(f"Warning: Error closing aioftp client in timeout handler: {close_err}")
         raise # Re-raise the timeout error to be caught by the main try/except
     except Exception as e:
         print(f"Failed during asynchronous FTP process: {e}")
@@ -540,11 +560,14 @@ async def async_ftp_process():
         if os.path.exists(TEMP_LOCAL_DOWNLOAD_DIR):
             print(f"Cleaning up temporary local download directory after error: {TEMP_LOCAL_DOWNLOAD_DIR}")
             shutil.rmtree(TEMP_LOCAL_DOWNLOAD_DIR)
-        # Ensure client is closed if it was created before the error and is connected
-        if client and client.is_connected():
-             await client.close()
-        # Re-raise the exception to be caught by the main try/except
-        raise
+        # Ensure client is closed if it was created before the error
+        if client: # Check if client object was created
+             try:
+                 await client.close()
+                 print("Attempted to close aioftp client in general error handler.")
+             except Exception as close_err:
+                 print(f"Warning: Error closing aioftp client in general error handler: {close_err}")
+        raise # Re-raise the exception to be caught by the main try/except
 
 
 # --- Main Execution ---
