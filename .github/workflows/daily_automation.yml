@@ -33,9 +33,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-          cache: 'pip'
+          # cache: 'pip' # Removed this line
 
-      # --- Debugging Steps ---
+      # --- Debugging Steps (Keep these for now) ---
       - name: Show requirements.txt content
         run: cat requirements.txt
         working-directory: .
