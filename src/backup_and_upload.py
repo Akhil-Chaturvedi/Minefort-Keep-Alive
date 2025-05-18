@@ -98,7 +98,7 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
         items_info = await ftp_client.list(remote_dir)
         print(f"Successfully listed {remote_dir}. Found {len(items_info)} items.")
         # Log the names and types of the items found for detailed debugging
-        item_details_found = [(item_info[0], item_info[1].get('type', 'N/A')) for item_info in items_info]
+        item_details_found = [(str(item_info[0]), item_info[1].get('type', 'N/A')) for item_info in items_info] # Convert PurePosixPath to string for logging clarity
         print(f"Details of items found in {remote_dir}: {item_details_found}")
 
 
@@ -108,26 +108,33 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
         return remote_items # Returns empty list if error on first list
 
     for item_info in items_info:
-        item_name = item_info[0]
+        item_name_path = item_info[0] # This is the PurePosixPath object
+        item_name_str = str(item_name_path) # Convert to string
         item_attributes = item_info[1]
 
-        # Skip special directories
-        if item_name in ('.', '..'):
-            print(f"Skipping special item: {item_name}")
+        # Skip special directories like '.' and '..'
+        # Check both the string representation and the path object name if possible
+        if item_name_str in ('.', '..') or item_name_path.name in ('.', '..'):
+            print(f"Skipping special item: {item_name_str}")
             continue
+
+        # Get the item name without leading slash for comparison with filter
+        item_name_for_filter = item_name_str.lstrip('/')
 
         # --- Filtering Logic ---
         # Apply filter only at the root directory level
         if items_filter is not None and remote_dir == REMOTE_FTP_ROOT:
-            if item_name not in items_filter:
-                print(f"Skipping item in root filter: {item_name} (not in {items_filter})")
+            # Compare the item name without the leading slash to the filter list
+            if item_name_for_filter not in items_filter:
+                print(f"Skipping item in root filter: {item_name_for_filter} (not in {items_filter})")
                 continue
             else:
-                 print(f"Including item in root filter: {item_name}")
+                 print(f"Including item in root filter: {item_name_for_filter}")
 
         # --- End Filtering Logic ---
 
-        full_remote_item_path = os.path.join(remote_dir, item_name).replace('\\', '/')
+        # Construct the full remote path for recursion/download
+        full_remote_item_path = os.path.join(remote_dir, item_name_str).replace('\\', '/')
         # Clean up potential double slashes (except for root '/')
         if full_remote_item_path != '/' and full_remote_item_path.startswith('//'):
              full_remote_item_path = full_remote_item_path[1:]
@@ -136,12 +143,12 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
         if 'type' in item_attributes:
             if item_attributes['type'] == 'dir':
                 item_type = 'dir'
-                print(f"Identified as directory: {item_name}")
+                print(f"Identified as directory: {item_name_for_filter}") # Use cleaned name for log
             elif item_attributes['type'] == 'file':
                 item_type = 'file'
-                print(f"Identified as file: {item_name}")
+                print(f"Identified as file: {item_name_for_filter}") # Use cleaned name for log
             else:
-                 print(f"Skipping item with unknown type: {item_name} (Type: {item_attributes.get('type', 'N/A')})")
+                 print(f"Skipping item with unknown type: {item_name_for_filter} (Type: {item_attributes.get('type', 'N/A')})") # Use cleaned name for log
                  continue # Skip items with types we don't handle (like links)
 
         if item_type == 'dir':
@@ -438,7 +445,7 @@ async def async_ftp_process():
         client = aioftp.Client() # No timeout parameter here
 
         print(f"Connecting to FTP (aioftp): {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
-        # Use asyncio.wait_for for the connection attempt timeout
+        # Use asyncio.wait_for to set a specific timeout for the connection attempt itself
         # Increased connection timeout slightly
         await asyncio.wait_for(client.connect(FTP_HOST, FTP_PORT), timeout=90) # Set connection timeout (e.g., 90 seconds)
 
@@ -559,7 +566,7 @@ async def async_ftp_process():
 
 
         # Create the zip file from the contents of the temporary local download directory
-        print(f"Starting zipping process from local directory: {TEMP_LOCAL_DOWNLOAD_DIR}")
+        print(f"Starting zipping process from local directory: {TEMP_LOCAL_DOWNLOAD_DIR} to {TEMP_ZIP_FILE_PATH}")
         zip_local_directory(TEMP_LOCAL_DOWNLOAD_DIR, TEMP_ZIP_FILE_PATH)
         print(f"Zip file created at: {TEMP_ZIP_FILE_PATH}")
 
@@ -666,7 +673,7 @@ if __name__ == "__main__":
     finally:
         # Clean up the temporary repository directory
         if os.path.exists(TEMP_REPO_DIR):
-            print(f"Cleaning up temporary repository directory: {TEMP_REPO_DIR}")
+            print(f"Removing existing temporary repository directory: {TEMP_REPO_DIR}")
             shutil.rmtree(TEMP_REPO_DIR)
         # Clean up the temporary zip file (should be done after successful push)
         # Added a check here just in case, although the previous try/except in main should handle it on failure
