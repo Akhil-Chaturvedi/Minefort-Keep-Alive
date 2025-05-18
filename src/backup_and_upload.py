@@ -94,13 +94,18 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
     remote_items = []
 
     try:
-        # aioftp's list method returns a list of tuples (name, attributes)
+        print(f"Attempting to list contents of {remote_dir}...")
         items_info = await ftp_client.list(remote_dir)
-        # print(f"Items found in {remote_dir}: {[item_info[0] for item_info in items_info]}") # Too verbose for many files
+        print(f"Successfully listed {remote_dir}. Found {len(items_info)} items.")
+        # Log the names and types of the items found for detailed debugging
+        item_details_found = [(item_info[0], item_info[1].get('type', 'N/A')) for item_info in items_info]
+        print(f"Details of items found in {remote_dir}: {item_details_found}")
+
+
     except Exception as e:
         print(f"Error listing contents of directory {remote_dir}: {e}")
         # Log error and return what we have
-        return remote_items
+        return remote_items # Returns empty list if error on first list
 
     for item_info in items_info:
         item_name = item_info[0]
@@ -108,13 +113,18 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
 
         # Skip special directories
         if item_name in ('.', '..'):
+            print(f"Skipping special item: {item_name}")
             continue
 
         # --- Filtering Logic ---
         # Apply filter only at the root directory level
-        if items_filter is not None and remote_dir == REMOTE_FTP_ROOT and item_name not in items_filter:
-            # print(f"Skipping item (not in root filter): {item_name}") # Too verbose
-            continue
+        if items_filter is not None and remote_dir == REMOTE_FTP_ROOT:
+            if item_name not in items_filter:
+                print(f"Skipping item in root filter: {item_name} (not in {items_filter})")
+                continue
+            else:
+                 print(f"Including item in root filter: {item_name}")
+
         # --- End Filtering Logic ---
 
         full_remote_item_path = os.path.join(remote_dir, item_name).replace('\\', '/')
@@ -126,11 +136,13 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
         if 'type' in item_attributes:
             if item_attributes['type'] == 'dir':
                 item_type = 'dir'
-                # print(f"Identified as directory: {item_name}") # Too verbose
+                print(f"Identified as directory: {item_name}")
             elif item_attributes['type'] == 'file':
                 item_type = 'file'
-                # print(f"Identified as file: {item_name}") # Too verbose
-            # Ignore other types like links for backup purposes
+                print(f"Identified as file: {item_name}")
+            else:
+                 print(f"Skipping item with unknown type: {item_name} (Type: {item_attributes.get('type', 'N/A')})")
+                 continue # Skip items with types we don't handle (like links)
 
         if item_type == 'dir':
             # Add the directory path itself (ending with /) to the list
@@ -141,23 +153,29 @@ async def collect_remote_items(ftp_client, remote_dir, items_filter=None):
              # Don't add the root directory as a separate item if it's just '/'
             if dir_path_for_list != '/':
                  remote_items.append((dir_path_for_list, 'dir'))
+                 print(f"Added directory for structure: {dir_path_for_list}")
 
             # Recurse into this directory
             # Pass None for items_filter for recursive calls within selected directories
+            print(f"Recursing into directory: {full_remote_item_path}")
             subdir_items = await collect_remote_items(ftp_client, full_remote_item_path, items_filter=None)
             remote_items.extend(subdir_items)
+            print(f"Finished collecting items in subdirectory: {full_remote_item_path}")
+
 
         elif item_type == 'file':
             # Add the file path to the list
             remote_items.append((full_remote_item_path, 'file'))
-            # print(f"Collected file for download: {full_remote_item_path}") # Too verbose
+            print(f"Collected file for download: {full_remote_item_path}")
 
+
+    print(f"Finished collecting items in directory: {remote_dir}. Total items collected in this call: {len(items_info)}. Total items collected recursively so far: {len(remote_items)}")
     return remote_items
 
 # --- Local Zipping ---
 def zip_local_directory(local_dir, zip_filepath):
     """Creates a zip file from contents of a local directory."""
-    print(f"Creating zip file {zip_filepath} from local directory {local_dir}")
+    print(f"Starting zipping process from local directory: {local_dir} to {zip_filepath}")
     try:
         with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zipf:
             # Walk through the local directory
@@ -175,7 +193,13 @@ def zip_local_directory(local_dir, zip_filepath):
                     zip_dir_path = os.path.join(relative_base_path_in_zip, dir).replace('\\', '/') + '/'
                     # print(f"Adding local directory entry to zip: {zip_dir_path}") # Too verbose
                     try:
-                        zipf.writestr(zip_dir_path, "")
+                        # Check if the local directory actually exists before adding its entry (should, based on makedirs)
+                        full_local_dir_path = os.path.join(root, dir)
+                        if os.path.exists(full_local_dir_path):
+                            zipf.writestr(zip_dir_path, "")
+                        else:
+                             print(f"Warning: Local directory {full_local_dir_path} not found for zipping, skipping entry.")
+
                     except Exception as e:
                          print(f"Warning: Error adding local directory {zip_dir_path} entry to zip: {e}")
 
@@ -188,7 +212,12 @@ def zip_local_directory(local_dir, zip_filepath):
                     # print(f"Adding local file to zip: {zip_file_path}") # Too verbose
                     try:
                         # Use zipf.write() which handles opening and reading the local file
-                        zipf.write(full_local_file_path, zip_file_path)
+                        # Check if the local file actually exists before zipping (should, based on parfive download)
+                        if os.path.exists(full_local_file_path):
+                             zipf.write(full_local_file_path, zip_file_path)
+                        else:
+                             print(f"Warning: Local file {full_local_file_path} not found for zipping, skipping.")
+
                     except Exception as e:
                          print(f"Warning: Error adding local file {zip_file_path} to zip: {e}")
 
@@ -410,6 +439,7 @@ async def async_ftp_process():
 
         print(f"Connecting to FTP (aioftp): {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
         # Use asyncio.wait_for for the connection attempt timeout
+        # Increased connection timeout slightly
         await asyncio.wait_for(client.connect(FTP_HOST, FTP_PORT), timeout=90) # Set connection timeout (e.g., 90 seconds)
 
         # If connection is successful, set the command timeout
@@ -636,7 +666,7 @@ if __name__ == "__main__":
     finally:
         # Clean up the temporary repository directory
         if os.path.exists(TEMP_REPO_DIR):
-            print(f"Removing existing temporary repository directory: {TEMP_REPO_DIR}")
+            print(f"Cleaning up temporary repository directory: {TEMP_REPO_DIR}")
             shutil.rmtree(TEMP_REPO_DIR)
         # Clean up the temporary zip file (should be done after successful push)
         # Added a check here just in case, although the previous try/except in main should handle it on failure
