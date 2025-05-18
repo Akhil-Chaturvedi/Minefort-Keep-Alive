@@ -33,20 +33,21 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-          # cache: 'pip' # Removed this line
+          # Ensure cache: 'pip' is removed from here
 
-      # --- Debugging Steps (Keep these for now) ---
-      - name: Show requirements.txt content
-        run: cat requirements.txt
-        working-directory: .
-
+      # Ensure dependencies are installed
       - name: Install Python dependencies
         run: pip install -r requirements.txt
         working-directory: .
 
-      - name: Show installed parfive version
-        run: pip show parfive
-        # No working-directory needed if pip is in PATH
+      # --- Debugging Steps (Optional, you can keep or remove) ---
+      # - name: Show Python Location
+      #   run: echo "Python location: ${{ env.pythonLocation }}"
+      # - name: Show requirements.txt content
+      #   run: cat requirements.txt
+      #   working-directory: .
+      # - name: Show installed parfive version
+      #   run: pip show parfive
       # --- End Debugging Steps ---
 
 
@@ -57,6 +58,12 @@ jobs:
           MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
 
+      # --- Add or adjust the delay here ---
+      - name: Wait for server to wake up
+        run: sleep 60 # Increased delay to 1 minutes (adjust as needed)
+      # --- End delay ---
+
+
       - name: Upload error screenshot if login fails
         if: failure()
         uses: actions/upload-artifact@v4
@@ -66,7 +73,8 @@ jobs:
           if-no-files-found: ignore
 
       - name: Run Backup and Upload Script
-        run: python src/backup_and_upload.py
+        # Use explicit Python path if that helped before
+        run: ${{ env.pythonLocation }}/bin/python src/backup_and_upload.py
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_PORT: ${{ secrets.FTP_PORT }}
