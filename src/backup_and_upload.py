@@ -498,10 +498,7 @@ async def async_ftp_process():
              # file_progress: Show progress bars for individual files
              # initial_transfer_size: Initial chunk size for downloads
              # connect_timeout and timeout are also important for parfive downloads
-             dl = parfive.Downloader(
-                 file_progress=True,
-             )
-
+             dl = parfive.Downloader()
 
              # Enqueue files for parallel download
              for remote_path in remote_file_paths:
