@@ -1,1 +1,1 @@
-parfive[ftp]==0.9.6
+parfive[ftp]>=0.10.0
