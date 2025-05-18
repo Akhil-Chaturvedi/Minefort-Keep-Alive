@@ -532,9 +532,7 @@ async def async_ftp_process():
              if download_results.errors:
                  print("\nErrors occurred during parallel download:")
                  for err_info in download_results.errors:
-                     # err_info.response might be the aioftp exception
-                     error_details = err_info.response
-                     print(f"- URL: {err_info.url}, Error: {error_details}")
+                     print(f"- Error: {err_info}")
                  # Raise an error if any download failed
                  raise RuntimeError(f"Failed to download {len(download_results.errors)} files during parallel download.")
              else:
