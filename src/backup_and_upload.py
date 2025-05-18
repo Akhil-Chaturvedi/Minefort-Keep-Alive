@@ -403,16 +403,17 @@ async def async_ftp_process():
     """Asynchronous function to handle FTP connection, file collection, and parallel download."""
     print(f"Starting asynchronous FTP process...")
     client = None # Initialize client to None
-    remote_items_to_process = []
 
     try:
-        # Initialize aioftp client - timeout here is for commands *after* connection
-        client = aioftp.Client(timeout=180) # 3 minutes for commands
+        # Initialize aioftp client - Try WITHOUT command timeout initially
+        client = aioftp.Client() # No timeout parameter here
 
         print(f"Connecting to FTP (aioftp): {FTP_HOST}:{FTP_PORT} with user {FTP_USERNAME}")
-        # Use asyncio.wait_for to set a specific timeout for the connection attempt itself
-        # Increased connection timeout slightly
+        # Use asyncio.wait_for for the connection attempt timeout
         await asyncio.wait_for(client.connect(FTP_HOST, FTP_PORT), timeout=90) # Set connection timeout (e.g., 90 seconds)
+
+        # If connection is successful, set the command timeout
+        client.timeout = 180 # 3 minutes for subsequent commands
 
         await client.login(FTP_USERNAME, FTP_PASSWORD)
         print("FTP connection successful (aioftp).")
@@ -550,9 +551,9 @@ async def async_ftp_process():
         if client: # Check if client object was created
              try:
                  await client.close()
-                 print("Attempted to close aioftp client after timeout.")
+                 print("Attempted to close aioftp client after connection timeout.")
              except Exception as close_err:
-                 print(f"Warning: Error closing aioftp client in timeout handler: {close_err}")
+                 print(f"Warning: Error closing aioftp client in connection timeout handler: {close_err}")
         raise # Re-raise the timeout error to be caught by the main try/except
     except Exception as e:
         print(f"Failed during asynchronous FTP process: {e}")
@@ -635,7 +636,7 @@ if __name__ == "__main__":
     finally:
         # Clean up the temporary repository directory
         if os.path.exists(TEMP_REPO_DIR):
-            print(f"Cleaning up temporary repository directory: {TEMP_REPO_DIR}")
+            print(f"Removing existing temporary repository directory: {TEMP_REPO_DIR}")
             shutil.rmtree(TEMP_REPO_DIR)
         # Clean up the temporary zip file (should be done after successful push)
         # Added a check here just in case, although the previous try/except in main should handle it on failure
