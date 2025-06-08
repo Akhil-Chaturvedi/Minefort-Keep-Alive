@@ -58,23 +58,3 @@ jobs:
           MINEFORT_EMAIL: ${{ secrets.MINEFORT_EMAIL }}
           MINEFORT_PASSWORD: ${{ secrets.MINEFORT_PASSWORD }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }} # This is also the server ID
-
-      # No explicit sleep needed here if Playwright waits for backup creation/download
-
-      - name: Upload error screenshot if playwright fails
-        if: steps.playwright_run.conclusion == 'failure' # Check if the playwright step failed
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-error
-          path: playwright_error.png # Assuming playwright_error.png is still the path
-          if-no-files-found: ignore
-
-      # --- Add the new Python step ---
-      - name: Run Git Backup Manager # New step
-        # Pass the downloaded file path from the playwright step's output
-        run: ${{ env.pythonLocation }}/bin/python src/manage_git_backup.py ${{ steps.playwright_run.outputs.downloaded_file_path }}
-        env:
-          BACKUP_REPO_URL: ${{ secrets.BACKUP_REPO_URL }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BACKUP_FOLDER_IN_REPO: ${{ secrets.BACKUP_FOLDER_IN_REPO }}
-      # --- End new Python step ---
