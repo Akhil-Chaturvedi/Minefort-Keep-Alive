@@ -40,17 +40,6 @@ jobs:
         run: pip install -r requirements.txt
         working-directory: .
 
-      # --- Debugging Steps (Optional, you can keep or remove) ---
-      # - name: Show Python Location
-      #   run: echo "Python location: ${{ env.pythonLocation }}"
-      # - name: Show requirements.txt content
-      #   run: cat requirements.txt
-      #   working-directory: .
-      # - name: Show installed parfive version
-      #   run: pip show parfive
-      # --- End Debugging Steps ---
-
-
       - name: Run Playwright Server Automation (Wake & Backup)
         id: playwright_run # Add an ID to this step to access its outputs
         run: node src/start_server_playwright.js
