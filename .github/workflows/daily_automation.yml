@@ -1,4 +1,4 @@
-name: Daily Minefort Keep-Alive and Backup
+name: Daily Minefort Keep-Alive
 
 on:
   schedule:
