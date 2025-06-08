@@ -1,7 +1,7 @@
 {
   "name": "minefort-automation",
   "version": "1.0.0",
-  "description": "Automate Minefort server startup and backup",
+  "description": "Automate Minefort server startup",
   "main": "src/start_server_playwright.js",
   "scripts": {
     "start": "node src/start_server_playwright.js"
